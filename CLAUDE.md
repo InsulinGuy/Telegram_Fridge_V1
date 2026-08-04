@@ -821,40 +821,13 @@ handling, and parity with the sibling builds.
 No display and no SD card on this build. State is an RTC-memory digest reported
 over Telegram; there is no local UI or local file log.
 
-### ADR-003 — Sensors: SHT40 (I²C) + STTS22H (I²C), both on STEMMA QT — SUPERSEDED (2026-08-04)
-**Superseded by ADR-021** (M5 ENV II Unit SHT30 + ENV HAT DHT12, split buses),
-which retired both parts along with the Feather V2 itself. Historical text below.
+### ADR-003 — Sensors: SHT40 + STTS22H on STEMMA QT — SUPERSEDED by ADR-021
+> Retired with the Feather V2. Full text under **Superseded & historical ADRs**
+> at the end of this section.
 
-**Superseded 2026-07-21 (was SHT30/ENV II + DS18B20).** Both temperature points
-are now **I²C on the shared STEMMA QT bus**: point A is an **Adafruit SHT40**
-(0x44, ±0.2 °C typ.), point B is a **SparkFun Micro STTS22H** (0x3C, ±0.5 °C).
-This retires the 1-Wire DS18B20 (GPIO26 freed) and the M5Stack ENV II/SHT30.
-
-Rationale: an all-I²C, all-STEMMA-QT topology removes the 1-Wire bus, its 4.7 kΩ
-pull-up, and the Grove→STEMMA adapter the ENV II needed — both parts now plug
-straight into the Feather's STEMMA QT jack (daisy-chained). The `temp_a`/`temp_b`
-contract, ring buffer, and report format are **unchanged** — only the two sensor
-platforms in `sensor:` change (`sht4x` for A, `stts22h` for B). Trade-off vs the
-DS18B20: point B loses the waterproof immersion probe form factor; if an immersed
-probe is needed again that is a new ADR. Both parts are 3V3-native and both now
-sit on the GPIO2-switched rail, so **both** need the post-wake warm-up delay
-(previously only point A did). Temps-only: SHT40 humidity is not published
-(available at no extra I²C cost); STTS22H is temperature-only.
-
-> **Roles updated by ADR-011:** this ADR fixed the *parts* (SHT40 + STTS22H,
-> all-I²C). Their *roles* are now **asymmetric**, not equal-weight — SHT40
-> (`temp_a`) is the box-interior safety sensor and STTS22H (`temp_b`) is the
-> fridge-ambient leading indicator. See ADR-011.
-
-### ADR-004 — I²C power gating via GPIO2 in sleep — MOOT (2026-08-04)
-**Moot under ADR-020:** the M5StickC has no switched sensor rail, so there is
-nothing to gate and no warm-up to schedule. The decision has no force on the
-current board; it is kept for the history of the STTS22H cold-wake saga
-(issue #44), which was a direct consequence of it.
-
-Historical: cut the STEMMA QT rail (GPIO2 LOW) during deep sleep to remove the
-external-sensor load, re-enable + warm up on each wake. Traded a ~30 ms warm-up
-for lower sleep current.
+### ADR-004 — I²C power gating via GPIO2 in sleep — MOOT under ADR-020
+> No switched sensor rail on the M5StickC, so nothing to gate. Full text under
+> **Superseded & historical ADRs** at the end of this section.
 
 ### ADR-005 — Storage: RTC-memory ring buffer
 Between-report samples live in `RTC_DATA_ATTR` RTC slow memory, not NVS, to
@@ -875,33 +848,13 @@ WARN transitions ride the scheduled 4-h report; CRIT entry forces an early
 Wi-Fi alert with a hold-off. Same five-state enum as the siblings, no colour,
 no display encoding.
 
-### ADR-009 — Power source: USB bank, no required LiPo — SUPERSEDED (2026-07-22)
-**Superseded by ADR-010.** (Historical: powered from a USB bank; the bank
-auto-shutoff problem was the defining risk, resolved with the IKEA VARMFRONT in
-issue #11. An optional JST LiPo was the future enhancement — which ADR-010 now
-makes the sole supply.)
+### ADR-009 — Power source: USB bank, no required LiPo — SUPERSEDED by ADR-010
+> USB power bank; retired for the JST cell. Full text under **Superseded &
+> historical ADRs** at the end of this section.
 
-### ADR-010 — Power source: JST single-cell Li-ion, sole supply — SUPERSEDED (2026-08-04)
-**Superseded by ADR-022** (M5StickC onboard cell + AXP192), which retired the
-JST connector along with the Feather V2. Historical text below.
-
-Power is a **single-cell (1S, 3.7 V) Li-ion on the Feather's JST connector, as
-the only supply** — the USB power bank is retired (issue #42). Recharge over
-USB-C via the onboard charger.
-
-Rationale: a far simpler topology that eliminates the bank auto-shutoff problem
-entirely and enables genuine battery telemetry from the cell. The new defining
-constraint becomes **battery runtime** (measure average current, size the cell,
-set a recharge cadence). Consequences, all implemented in firmware:
-- Battery becomes a **primary, always-on metric** — voltage from the **A13 /
-  GPIO35 divider** (this board has **no fuel gauge**; see "No fuel gauge on this
-  board"), SoC estimated from that voltage — in every report and the boot message.
-- A **low-battery Telegram warning** (latched, once per depletion) at
-  `BATT_WARN_PCT`, and a **protective floor** at `BATT_CRIT_V` that skips the
-  scheduled report to conserve charge (temp-CRIT alerts still send).
-- Trade-off: no bank means RTC memory is lost if the cell is ever fully depleted
-  or unplugged — the warning + floor exist to keep that from happening; a
-  protected cell is required so the hardware cutoff backs them up.
+### ADR-010 — Power source: JST single-cell Li-ion, sole supply — SUPERSEDED by ADR-022
+> Feather JST 18650, retired with the Feather V2 for the StickC onboard cell.
+> Full text under **Superseded & historical ADRs** at the end of this section.
 
 ### ADR-011 — Sensor roles: box interior is primary safety, fridge is leading indicator
 **Still in force.** The *parts* named below were replaced by ADR-021 (SHT40 →
@@ -929,6 +882,31 @@ them silently is a compliance defect.
 > sensor *identities* are flipped relative to that branch, but the box/fridge
 > *roles* are the same. All predictor math uses `T_box = temp_a`,
 > `T_fridge = temp_b`.
+
+### ADR-012 — (intentionally skipped — never existed on `main`)
+Not a deletion — this number was never used on `main`. It was drafted on the
+unmerged `claude/device-settings-telegram-gkhyq4` branch (commit 7b96a73,
+2026-07-06) as *"Runtime settings persisted in NVS"*, but that branch numbered
+its ADRs 010/011/012 while `main` was independently using 010 for the JST cell.
+When the asymmetric-payload design was folded into `main` (67a69be, 2026-07-24)
+the sensor-roles ADR came across as **ADR-011** and the predictive/approach work
+was renumbered to **013/014**; the branch's getUpdates ADR later reappeared as
+**ADR-016**. The NVS-settings ADR was the one item never carried over or
+renumbered, so 012 was left empty. `grep -rn "ADR-012"` finds nothing in the
+tree and `git log -S"ADR-012" -- CLAUDE.md` finds nothing in `main`'s history.
+
+Its *substance* did land, just without an ADR number — so nothing about the
+design is undocumented, only its record: runtime settings live in NVS via
+ESPHome preferences (`logger/settings.h`, issue #4; `docs/settings-inventory.md`,
+issue #32), with compiled-in `constexpr` defaults in `helpers.h` as the
+fallback, and the Telegram `getUpdates` cursor is the NVS-backed
+`RuntimeSettings.update_offset` described inside **ADR-016**.
+
+The one thing worth recording here is the rationale that was lost: **settings go
+in NVS, not the RTC ring buffer (ADR-005)**, precisely because they change
+rarely (so flash-wear is a non-issue) and must survive a full power loss — the
+exact event that wipes RTC memory. That asymmetry is why the ring buffer stays
+in RTC while settings and the command cursor persist in NVS.
 
 ### ADR-013 — Predictive alert (Newton's law of cooling)
 A physics-based leading-indicator alert: from the current fridge/box gradient,
@@ -1336,6 +1314,76 @@ Consequences:
   nothing needed scrubbing in the split.
 - `enclosure/` (battery-holder STLs) was **not** carried over; it was untracked
   scratch work in `telefridge_V1` and unrelated to this firmware.
+
+### Superseded & historical ADRs
+
+> These decisions no longer govern the build, but are kept in full because they
+> record **why** the current design is what it is. Do not act on them as if they
+> were live; each names the ADR that replaced it. The active list above leaves a
+> one-line stub at each of these numbers so the sequence has no silent gaps.
+
+#### ADR-003 — Sensors: SHT40 (I²C) + STTS22H (I²C), both on STEMMA QT — SUPERSEDED (2026-08-04)
+**Superseded by ADR-021** (M5 ENV II Unit SHT30 + ENV HAT DHT12, split buses),
+which retired both parts along with the Feather V2 itself.
+
+**Superseded 2026-07-21 (was SHT30/ENV II + DS18B20).** Both temperature points
+are now **I²C on the shared STEMMA QT bus**: point A is an **Adafruit SHT40**
+(0x44, ±0.2 °C typ.), point B is a **SparkFun Micro STTS22H** (0x3C, ±0.5 °C).
+This retires the 1-Wire DS18B20 (GPIO26 freed) and the M5Stack ENV II/SHT30.
+
+Rationale: an all-I²C, all-STEMMA-QT topology removes the 1-Wire bus, its 4.7 kΩ
+pull-up, and the Grove→STEMMA adapter the ENV II needed — both parts now plug
+straight into the Feather's STEMMA QT jack (daisy-chained). The `temp_a`/`temp_b`
+contract, ring buffer, and report format are **unchanged** — only the two sensor
+platforms in `sensor:` change (`sht4x` for A, `stts22h` for B). Trade-off vs the
+DS18B20: point B loses the waterproof immersion probe form factor; if an immersed
+probe is needed again that is a new ADR. Both parts are 3V3-native and both now
+sit on the GPIO2-switched rail, so **both** need the post-wake warm-up delay
+(previously only point A did). Temps-only: SHT40 humidity is not published
+(available at no extra I²C cost); STTS22H is temperature-only.
+
+> **Roles updated by ADR-011:** this ADR fixed the *parts* (SHT40 + STTS22H,
+> all-I²C). Their *roles* are now **asymmetric**, not equal-weight — SHT40
+> (`temp_a`) is the box-interior safety sensor and STTS22H (`temp_b`) is the
+> fridge-ambient leading indicator. See ADR-011.
+
+#### ADR-004 — I²C power gating via GPIO2 in sleep — MOOT (2026-08-04)
+**Moot under ADR-020:** the M5StickC has no switched sensor rail, so there is
+nothing to gate and no warm-up to schedule. The decision has no force on the
+current board; it is kept for the history of the STTS22H cold-wake saga
+(issue #44), which was a direct consequence of it.
+
+Historical: cut the STEMMA QT rail (GPIO2 LOW) during deep sleep to remove the
+external-sensor load, re-enable + warm up on each wake. Traded a ~30 ms warm-up
+for lower sleep current.
+
+#### ADR-009 — Power source: USB bank, no required LiPo — SUPERSEDED (2026-07-22)
+**Superseded by ADR-010.** (Historical: powered from a USB bank; the bank
+auto-shutoff problem was the defining risk, resolved with the IKEA VARMFRONT in
+issue #11. An optional JST LiPo was the future enhancement — which ADR-010 now
+makes the sole supply.)
+
+#### ADR-010 — Power source: JST single-cell Li-ion, sole supply — SUPERSEDED (2026-08-04)
+**Superseded by ADR-022** (M5StickC onboard cell + AXP192), which retired the
+JST connector along with the Feather V2.
+
+Power is a **single-cell (1S, 3.7 V) Li-ion on the Feather's JST connector, as
+the only supply** — the USB power bank is retired (issue #42). Recharge over
+USB-C via the onboard charger.
+
+Rationale: a far simpler topology that eliminates the bank auto-shutoff problem
+entirely and enables genuine battery telemetry from the cell. The new defining
+constraint becomes **battery runtime** (measure average current, size the cell,
+set a recharge cadence). Consequences, all implemented in firmware:
+- Battery becomes a **primary, always-on metric** — voltage from the **A13 /
+  GPIO35 divider** (this board has **no fuel gauge**; see "No fuel gauge on this
+  board"), SoC estimated from that voltage — in every report and the boot message.
+- A **low-battery Telegram warning** (latched, once per depletion) at
+  `BATT_WARN_PCT`, and a **protective floor** at `BATT_CRIT_V` that skips the
+  scheduled report to conserve charge (temp-CRIT alerts still send).
+- Trade-off: no bank means RTC memory is lost if the cell is ever fully depleted
+  or unplugged — the warning + floor exist to keep that from happening; a
+  protected cell is required so the hardware cutoff backs them up.
 
 ---
 
