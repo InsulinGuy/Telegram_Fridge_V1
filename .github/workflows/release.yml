@@ -1,0 +1,35 @@
+name: Release
+
+# Triggers on version tags pushed to GitHub, e.g.:
+#   git tag v1.0.0 -m "First stable release"
+#   git push origin v1.0.0
+#
+# Creates a GitHub Release with auto-generated notes from commits/PRs
+# since the previous tag. Flashing is still done locally (secrets stay
+# on the dev machine and are never stored in CI).
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # full history so --generate-notes can diff tags
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "TeleFridge ${{ github.ref_name }}" \
+            --generate-notes \
+            --draft=false \
+            --latest

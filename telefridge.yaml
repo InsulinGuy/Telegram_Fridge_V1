@@ -1,0 +1,1036 @@
+# TeleFridge V1 — main ESPHome config. Target board: M5StickC (ADR-020).
+#
+# Items marked TODO/VERIFY must be checked on real hardware before relying on
+# them. See CLAUDE.md for the locked design and rationale behind every choice.
+#
+# This config was ported from the Adafruit ESP32 Feather V2, which is retired as
+# a target. The port is board-local by construction: temp_a / temp_b / batt_v /
+# batt_pct kept their ids and meanings, so nothing in logger/*.h changed. See the
+# M5StickC bring-up checklist in CLAUDE.md before the first fridge deployment.
+
+substitutions:
+  device_name: telefridge
+  # These three are COMPILE-TIME DEFAULTS only. At runtime the effective values
+  # come from persisted NVS settings (g_settings.*, issue #6): sample_interval_min
+  # drives deep sleep via set_sleep_duration() in on_boot, and report_every gates
+  # the cadence report. A factory-fresh device (empty NVS) falls back to exactly
+  # these. Keep sample_interval / sample_interval_min in sync (same value).
+  sample_interval: 15min      # deep_sleep compile-time default (runtime = g_settings.sample_interval_min)
+  sample_interval_min: "15"   # keep in sync with sample_interval above
+  report_every: "16"          # boot-log default only (runtime = g_settings.report_every)
+  telegram_bot_token: !secret telegram_bot_token
+  telegram_chat_id: !secret telegram_chat_id
+
+esphome:
+  name: ${device_name}
+  includes:
+    - logger/axp192.h
+    - logger/build_number.h
+    - logger/helpers.h
+    - logger/ring_buffer.h
+    - logger/predictor.h
+    - logger/settings.h
+    - logger/realert.h
+    - logger/commands.h
+    - logger/report.h
+  on_boot:
+    - priority: 100
+      then:
+        # Put the AXP192 into the state this build needs, every wake (ADR-020 /
+        # ADR-022): enable its ADCs (otherwise the battery-voltage registers read
+        # zero — ESPHome never calls M5's Axp.begin()), hold the LCD backlight and
+        # panel off (headless, ADR-002), and keep the Grove 5 V boost on for the
+        # ENV II Unit. The PMIC is NOT on an ESPHome i2c bus — the ESP32 has only
+        # two I²C peripherals and both temperature sensors need one each, so
+        # axp192.h bit-bangs G21/G22 itself (ADR-023). It therefore configures its
+        # own GPIOs and has no component ordering to respect, only the requirement
+        # that it run before the first batt_v read.
+        - lambda: 'axp192_init();'
+        # Classify the wake source before branching (issue #6 / #9). On the
+        # ESP32, esp_sleep_get_wakeup_cause() stays latched from wake until the
+        # next sleep is configured, so reading it here is safe.
+        #   - UNDEFINED  → any non-deep-sleep boot: power-on, brownout, external
+        #                  RTS/EN reset, USB flash, or OTA reboot
+        #   - TIMER      → normal SAMPLE_INTERVAL sampling wake
+        #   - EXT0       → GPIO37 Button A → on-demand report ("send now")
+        # ext1/other causes are treated as a plain sampling wake.
+        #
+        # NOTE: the boot message is gated on g_first_boot (below), NOT on this
+        # cause. g_first_boot is an RTC_DATA_ATTR default that is only re-applied
+        # when RTC slow memory is cleared — i.e. a true POWER-ON reset (VDD cycle)
+        # or brownout. An external RTS/EN reset, software reset, USB flash, or OTA
+        # reboot all report UNDEFINED but PRESERVE RTC memory, so g_first_boot
+        # keeps its prior value and no boot message is re-sent. To force a fresh
+        # boot message you must power-cycle the board (see ADR-005 / issue #2).
+        # Load persisted runtime settings from NVS (issue #4). Falls back to the
+        # compiled defaults in helpers.h on empty/corrupt NVS, so a factory-fresh
+        # device behaves exactly like pre-settings firmware (guardrail #4). Runs
+        # before the wake branch so any consumer sees live values.
+        - lambda: 'settings_load();'
+        # Drive the deep-sleep interval from the persisted setting (issue #6),
+        # not the compile-time ${sample_interval} default. set_sleep_duration()
+        # takes milliseconds; runs here in on_boot (after settings_load, before
+        # any deep_sleep.enter) so a changed interval takes effect next wake.
+        # A /set of sample_interval_min is therefore honoured without a reflash.
+        - lambda: |-
+            id(deep_sleep_1).set_sleep_duration(
+              (uint32_t) g_settings.sample_interval_min * 60000UL);
+        - lambda: |-
+            esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+            id(g_button_wake) = (cause == ESP_SLEEP_WAKEUP_EXT0);
+            ESP_LOGI("wake", "wakeup_cause=%d first_boot=%d button=%d",
+                     (int) cause, (int) g_first_boot, (int) id(g_button_wake));
+        - if:
+            condition:
+              lambda: 'return g_first_boot;'
+            then:
+              - script.execute: send_boot_msg_and_continue
+            else:
+              - script.execute: wake_cycle
+
+esp32:
+  board: m5stick-c        # M5StickC, ESP32-PICO-D4 (ADR-020)
+  framework:
+    type: esp-idf         # required for deep-sleep + RTC_DATA_ATTR (ADR-001)
+    sdkconfig_options:
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "60"   # HTTPS to Telegram (TLS + round trip) can exceed 5s default
+
+# NO `psram:` block. The PICO-D4 has no PSRAM (unlike the Feather V2's
+# PICO-MINI-02); declaring it here boot-loops the device. See ADR-020.
+
+logger:
+  level: DEBUG   # TEMP: bumped from INFO for VUSB/OTA debug session — revert after
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# safe_mode: pressing reset ~10 times before the device re-enters deep sleep
+# triggers safe mode — device stays awake with WiFi on and listens for OTA.
+safe_mode:
+  num_attempts: 10
+  reboot_timeout: 3min
+
+# --- I2C buses — LOCKED (ADR-020, amended by ADR-023) ----------------------
+# TWO hardware buses, which is ALL THE ESP32 HAS — it provides exactly two I²C
+# peripherals and ESPHome enforces the limit (components/i2c: VARIANT_ESP32
+# NUM=2). Both go to the temperature sensors, which sit on different physical
+# connectors and so cannot share one:
+#
+#   bus_box    Grove port (G32/G33) → ENV II Unit, SHT30 @0x44 → temp_a
+#   bus_fridge HAT header (G0/G26)  → ENV HAT, DHT12 @0x5C     → temp_b
+#
+# The AXP192 PMIC (internal, G21/G22, @0x34) is therefore NOT declared here.
+# It is bit-banged in logger/axp192.h — see ADR-023 for why the PMIC is the
+# right device to move off hardware I²C (read once per wake, low speed, no
+# timing constraint) rather than either sensor (ESPHome components needing a
+# real bus). Their addresses also happen not to collide (0x44 vs 0x5C), which
+# keeps a rewire-onto-one-bus fallback open if G0 misbehaves — see below.
+#
+# The M5StickC has no switched sensor rail (no GPIO2 equivalent), so there is no
+# power-gating switch here at all — the sensors are permanently powered and the
+# ADR-004 cut-in-sleep warm-up problem is gone.
+#
+# NOTE ON G0: it is an ESP32 strapping pin (boot mode select). The ENV HAT wires
+# SDA to it and M5 ships it that way, so it works — I2C idles high via the
+# pull-ups, which is the normal-boot level. But anything holding that line LOW at
+# reset will stop the device booting. Verify a clean boot with the HAT fitted.
+i2c:
+  - id: bus_box
+    sda: GPIO32
+    scl: GPIO33
+    scan: true
+  - id: bus_fridge
+    sda: GPIO0
+    scl: GPIO26
+    scan: true
+
+sensor:
+  # temp_a — ENV II Unit, SHT30 @0x44 on the Grove bus (ADR-021). This is the
+  # PRIMARY SAFETY sensor (ADR-011): it goes INSIDE the insulated box on the
+  # Grove cable, and its reading is the pharma-spec (2–8 °C) authority. The ENV
+  # II's SHT30 is the accurate half of this build (±0.2 °C typ) — which is why
+  # it, and not the HAT's DHT12, holds the compliance role.
+  # Hub component + temperature sub-sensor: component.update targets `sht30_hub`.
+  # Temperature only — the SHT30 measures humidity in the same conversion; add a
+  # `humidity:` sub-sensor here to publish it at no extra I²C cost.
+  # Ref: https://docs.m5stack.com/en/unit/envII
+  - platform: sht3xd
+    i2c_id: bus_box
+    address: 0x44
+    id: sht30_hub               # component id for explicit component.update
+    temperature:
+      name: "Fridge Temp A (ENV II SHT30)"
+      id: temp_a
+    update_interval: never
+
+  # temp_b — ENV HAT, DHT12 @0x5C on the HAT bus (ADR-021). ADVISORY leading
+  # indicator only (ADR-011): fridge air, wider bands, batched into the report
+  # rather than early-alerted. The DHT12 is a ±0.5 °C part, too coarse for the
+  # 1 °C-wide box WARN shoulder — it must NEVER be swapped onto temp_a.
+  # Two caveats carried from ADR-021: (1) it feeds the predictor's T_fridge term,
+  # which is error-sensitive near the threshold — see PREDICT_SMOOTH_N; (2) DHT-
+  # family parts are unreliable in condensing air, and fridge ambient is exactly
+  # that. If it misbehaves, the same HAT's BMP280 @0x76 is a drop-in replacement
+  # here via `platform: bmp280_i2c` — a YAML-only swap, no hardware change.
+  # Ref: https://docs.m5stack.com/en/hat/hat-env
+  - platform: dht12
+    i2c_id: bus_fridge
+    id: dht12_hub               # component id for explicit component.update
+    temperature:
+      name: "Fridge Temp B (ENV HAT DHT12)"
+      id: temp_b
+    update_interval: never
+
+  - platform: wifi_signal
+    name: "WiFi RSSI"
+    id: wifi_rssi
+    update_interval: never    # updated explicitly on report/alert wakes after WiFi connects
+
+  # Battery voltage — the M5StickC's onboard ~95 mAh cell is the SOLE supply
+  # (ADR-022). There is no ADC divider and no fuel gauge on this board: the cell
+  # is behind the AXP192 PMIC, whose 12-bit battery-voltage ADC (regs 0x78/0x79,
+  # 1.1 mV/LSB) we read directly over a bit-banged G21/G22 — see logger/axp192.h
+  # for why this is a hand-rolled read rather than a component (there is no core
+  # ESPHome axp192, we are not pinning a third-party one into a safety build,
+  # and there is no third hardware I²C peripheral to give it — ADR-023).
+  # NaN on I²C failure, which every downstream battery path already degrades to
+  # "battery n/a". Read explicitly each wake via `component.update: batt_v`.
+  - platform: template
+    id: batt_v
+    name: "LiPo Voltage"
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    update_interval: never
+    lambda: 'return axp192_batt_voltage();'
+
+  # Battery % — estimated from the cell voltage (no fuel gauge to report SoC).
+  # Same 1S Li-ion chemistry as the retired JST cell, so li_ion_soc() is unchanged.
+  # Update AFTER batt_v each wake so it reads the fresh voltage.
+  - platform: template
+    id: batt_pct
+    name: "LiPo %"
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: never
+    lambda: 'return li_ion_soc(id(batt_v).state);'
+
+time:
+  - platform: sntp
+    id: sntp_time
+    # Only actually syncs on report/alert wakes when Wi-Fi is up.
+    servers:
+      - 216.239.35.0    # time.google.com — bypasses DNS, fastest first response
+      - 216.239.35.4    # time.google.com alt
+      - 162.159.200.123 # time.cloudflare.com alt
+
+# The ISP line's direct IPv4 WAN path drops TCP (issue #24; likely
+# DS-Lite/CGNAT). IPv6 gives the device the same working path the rest of
+# the network uses. Harmless if the router offers no IPv6 (SLAAC just fails).
+network:
+  enable_ipv6: true
+
+# --- Wi-Fi: off except on report/alert wakes — LOCKED ---------------------
+wifi:
+  enable_on_boot: false
+  # Try both known networks each Wi-Fi-up wake; ESPHome scans and connects to
+  # whichever is present (same password for both). Order = preference.
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+    - ssid: !secret wifi_ssid_2
+      password: !secret wifi_password
+  # Modem power-save (ESPHome ESP32 default: LIGHT) drops packets on this weak
+  # link (-70 dB) and stalled TCP connects to api.telegram.org (issue #24).
+  # The radio is only on ~1 min per 4 h by design, so NONE costs nothing here.
+  power_save_mode: none
+
+http_request:
+  useragent: telefridge
+  timeout: 15s
+  # Real TLS verification against a pinned CA (issue #24). api.telegram.org
+  # chains to GoDaddy Root CA G2 (valid to 2037); pinning the ROOT survives
+  # Telegram's yearly leaf renewals. Requires valid system time — see the
+  # SNTP wait_until in each send script.
+  verify_ssl: true
+  ca_certificate_path: certs/telegram_root_ca.pem
+
+globals:
+  # RAM-only, set once in on_boot from the deep-sleep wakeup cause. True when
+  # this wake was the GPIO37 Button A press (ext0), meaning the user asked for an
+  # on-demand report — wake_cycle forces the report path regardless of cadence.
+  # Reflects the current wake only, so it must NOT persist across sleep.
+  - id: g_button_wake
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  # RAM-only per-wake guard (issue #53). Set true the moment wake_cycle hands off
+  # to ANY send script (fault / crit / batt / report). It stops wake_cycle from
+  # (a) dispatching a second send script this wake and (b) running its own bottom
+  # deep_sleep.enter — which, being a *manual* enter, overrides the send script's
+  # deep_sleep.prevent and would otherwise sleep the device mid-connect, dropping
+  # the alert. Reset false at the top of every wake_cycle. Reflects the current
+  # wake only, so it must NOT persist across sleep.
+  - id: g_wake_handled
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  # RAM-only. The predicted-breach side to fire THIS wake (int-cast AlertState:
+  # ALERT_OK = stay quiet). Computed once per wake by predictor_step() in the read
+  # section so the EMA/debounce/hold-off state advances every wake; the SEND is
+  # then gated on g_wake_handled at the hook point below. Reflects the current
+  # wake only — must NOT persist across sleep. Issue #3 / ADR-013.
+  - id: predict_fire_side
+    type: int
+    restore_value: no
+    initial_value: "0"
+  # RAM-only (issue #65/#18). Why the CRIT send script is firing THIS wake, as an
+  # int-cast ReAlertReason: ENTRY(3)=first alert of an episode, REMINDER(1)=#65
+  # time reminder, ESCALATION(2)=#18 worsening. Set at dispatch; the send body
+  # prepends realert_prefix() and the on_response 2xx branch arms the matching
+  # episode state (ADR-018/019). Reflects the current wake only.
+  - id: g_crit_realert_reason
+    type: int
+    restore_value: no
+    initial_value: "0"
+  # RAM-only (issue #18). True when the predicted-breach send this wake is an
+  # ETA-collapse escalation (not a fresh predictor_step() fire), so the send's
+  # 2xx branch arms via predict_escalation_arm() and the body prefixes it.
+  - id: predict_is_escal
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+deep_sleep:
+  id: deep_sleep_1
+  # Compile-time DEFAULT only. The effective interval is set at runtime in
+  # on_boot from the persisted g_settings.sample_interval_min (issue #6), so a
+  # /set survives without a reflash. This value applies only until settings_load
+  # + set_sleep_duration run on the first wake (and as the fallback if NVS is
+  # empty, since settings_load then yields the compiled default anyway).
+  sleep_duration: ${sample_interval}
+  wakeup_pin:
+    # Button A on the M5StickC front face (ADR-020). Input-only RTC GPIO, so it
+    # is valid as an ext0 source. Buttons pull to GND, hence inverted.
+    # TODO VERIFY on hardware: confirm G37 is pulled up and does NOT float. A
+    # floating ext0 pin is the issue #39 failure — the Feather self-woke every
+    # 30-50 s instead of holding its sleep interval, which quietly destroys the
+    # power budget. Confirm the sleep interval holds before trusting any runtime
+    # measurement on this board.
+    number: GPIO37
+    inverted: true
+
+script:
+  # Main wake logic: sample -> buffer -> maybe alert/report -> sleep.
+  - id: wake_cycle
+    mode: single
+    then:
+      # Both sensors are permanently powered on this board (no switched rail —
+      # ADR-020), so this is settling margin, not a cold-start warm-up. Neither
+      # the SHT30 nor the DHT12 has the STTS22H's cold-wake conversion latency,
+      # so the poll-until-valid loop that used to live here is gone (ADR-021).
+      - delay: 100ms
+      - component.update: sht30_hub   # ENV II SHT30 hub; publishes temp_a
+      - component.update: dht12_hub   # ENV HAT DHT12 hub; publishes temp_b
+      # AXP192 cell voltage. Reached well after axp192_init() enabled the ADCs in
+      # on_boot, which is what gives the first conversion time to land.
+      - component.update: batt_v
+      - component.update: batt_pct    # estimate SoC from the fresh voltage
+      # WAIT FOR temp_a BEFORE READING IT. The two platforms are NOT symmetric:
+      # dht12 publishes synchronously inside update(), but sht3xd only starts the
+      # measurement there and publishes from a set_timeout(50ms) callback. Deep
+      # sleep wipes RAM, so temp_a.state begins every wake as NaN — meaning a bare
+      # 20 ms delay sampled NaN for the BOX sensor on every timer wake: NaN into
+      # the ring, NaN into the CRIT check (so the compliance sensor was not
+      # actually being monitored), and a correct-but-unwanted stale/NaN sensor
+      # fault after FAULT_CONSEC_N wakes. Waiting on the value itself — rather
+      # than a longer blind delay — is robust to the platform changing its timing.
+      # On a genuinely dead sensor this times out and leaves NaN, which is exactly
+      # what the fault detector should then latch (issue #12).
+      - wait_until:
+          condition:
+            lambda: 'return !std::isnan(id(temp_a).state);'
+          timeout: 1s
+      - delay: 20ms
+      - lambda: |-
+          uint32_t epoch = id(sntp_time).now().is_valid()
+                             ? (uint32_t) id(sntp_time).now().timestamp : 0;
+          ring_push(epoch, id(temp_a).state, id(temp_b).state);
+          g_wake_count++;
+
+      # Per-wake dispatch guard (issue #53): no send script has run yet this wake.
+      - lambda: 'id(g_wake_handled) = false;'
+
+      # Predictor state advance (ADR-013 / issue #3). Runs EVERY wake so the EMA
+      # rings, debounce history and hold-off stay coherent regardless of whether
+      # any alert fires. Order mirrors the host tests: smooth-in both readings,
+      # tick the hold-off once, then evaluate. predictor_step() records this
+      # sample's debounce vote and returns the side to fire (ALERT_OK = quiet);
+      # the SEND is gated on g_wake_handled at the hook point below.
+      - lambda: |-
+          box_hist_push(id(temp_a).state);
+          fridge_hist_push(id(temp_b).state);
+          predict_holdoff_tick();
+          realert_tick();          // #65/#18: advance reminder + escalation clocks
+          id(predict_fire_side) = (int) predictor_step();
+          // #18 predicted-breach escalation: if predictor_step() is quiet because
+          // we are inside its hold-off, but the projected ETA has collapsed to
+          // <= half the last-alerted ETA (same side), escalate now.
+          id(predict_is_escal) = false;
+          if (id(predict_fire_side) == ALERT_OK) {
+            AlertState esc = predict_escalation_side();
+            id(predict_fire_side) = (int) esc;
+            id(predict_is_escal)  = (esc != ALERT_OK);
+          }
+
+      # Sensor-fault check (early alert path, issue #12) — a silent sensor
+      # failure defeats the monitor: alert_state() returns OK on NaN, so a dead
+      # sensor would fire nothing. faults_observe() advances the per-sensor
+      # NaN/stuck/stale counters; fire an early Wi-Fi alert on ENTRY into fault
+      # (latched per sensor in g_fault_latch_*), clearing the latch when a sensor
+      # reads healthy again. Runs BEFORE the box-CRIT check because a faulted
+      # reading can't be trusted to CRIT-classify. Does NOT clear the ring.
+      - lambda: 'faults_observe(id(temp_a).state, id(temp_b).state);'
+      - if:
+          condition:
+            lambda: |-
+              return (sensor_faulted(true)  && !g_fault_latch_a) ||
+                     (sensor_faulted(false) && !g_fault_latch_b);
+          then:
+            # Guard (issue #53): only dispatch if nothing else owns this wake.
+            # The per-sensor g_fault_latch_* is armed ONLY on a confirmed 2xx
+            # send (fault_latch_arm() inside the send script's on_response) —
+            # NOT here. A preempted OR failed fault send is thus never marked
+            # sent, so it re-fires on the next wake (issues #53, #14).
+            - if:
+                condition:
+                  lambda: 'return !id(g_wake_handled);'
+                then:
+                  - lambda: 'id(g_wake_handled) = true;'
+                  - script.execute: send_fault_alert_and_sleep
+          else:
+            - lambda: |-
+                if (!sensor_faulted(true))  g_fault_latch_a = false;
+                if (!sensor_faulted(false)) g_fault_latch_b = false;
+
+      # CRIT check (early alert path) — fire only on ENTRY into a crit zone.
+      - if:
+          condition:
+            lambda: |-
+              AlertState a = alert_state_live(id(temp_a).state, true);
+              AlertState b = alert_state_live(id(temp_b).state, false);
+              return (is_crit(a) || is_crit(b)) && !is_crit(g_last_alert);
+          then:
+            # Guard (issue #53): if a higher-priority send (fault) already owns
+            # this wake, do NOT dispatch here — leave g_last_alert so the CRIT
+            # re-fires on a later wake once the higher-priority path clears.
+            # The g_last_alert hold-off is armed ONLY on a confirmed 2xx send
+            # (crit_latch_arm() inside the send script's on_response) — NOT here.
+            # A failed send must not silence the CRIT path (issue #14).
+            - if:
+                condition:
+                  lambda: 'return !id(g_wake_handled);'
+                then:
+                  - lambda: |-
+                      id(g_wake_handled) = true;
+                      id(g_crit_realert_reason) = REALERT_ENTRY;   // first alert of the episode
+                  - script.execute: send_crit_alert_and_sleep
+          else:
+            - lambda: |-
+                if (!is_crit(alert_state_live(id(temp_a).state, true)) &&
+                    !is_crit(alert_state_live(id(temp_b).state, false)))
+                  g_last_alert = ALERT_OK;
+
+      # In-zone box-CRIT re-alert (issue #65 reminder / #18 escalation, ADR-019).
+      # Runs only when we are already inside a CRIT episode (is_crit(g_last_alert),
+      # set on the entry send-ack) and the BOX is still critical. crit_episode_reset
+      # runs whenever the box is NOT critical so a fresh box excursion starts clean.
+      # Reason is decided here (pure read); the episode clocks advance on the send's
+      # 2xx branch (ADR-018). Escalation out-ranks the reminder (decided inside
+      # crit_realert_decision). Shares the CRIT send script via g_crit_realert_reason.
+      - lambda: |-
+          if (!is_crit(alert_state_live(id(temp_a).state, true))) crit_episode_reset();
+      - if:
+          condition:
+            lambda: |-
+              return is_crit(g_last_alert) &&
+                     is_crit(alert_state_live(id(temp_a).state, true)) &&
+                     !id(g_wake_handled);
+          then:
+            - lambda: |-
+                id(g_crit_realert_reason) = (int) crit_realert_decision(
+                    alert_state_live(id(temp_a).state, true), id(temp_a).state);
+            - if:
+                condition:
+                  lambda: 'return id(g_crit_realert_reason) != REALERT_NONE;'
+                then:
+                  - lambda: 'id(g_wake_handled) = true;'
+                  - script.execute: send_crit_alert_and_sleep
+
+      # Predicted-breach check (early alert path, ADR-013 / issue #3). The box is
+      # not yet out of range but is projected to cross a box CRIT bound within
+      # PREDICT_HORIZON. predict_fire_side was computed above by predictor_step()
+      # (already gated on horizon + debounce + hold-off). Placed AFTER the absolute
+      # box-CRIT check — a real CRIT out-ranks a prediction on the same wake — and
+      # before the report, because a predicted breach is an EARLY Wi-Fi alert.
+      # Sibling of the box-CRIT block: leaves the ring intact (no ring_clear) so
+      # the next scheduled report still carries the full window.
+      - if:
+          condition:
+            lambda: 'return id(predict_fire_side) != ALERT_OK;'
+          then:
+            # Guard (issue #53): only dispatch if nothing higher-priority (fault /
+            # box CRIT) already owns this wake. g_last_predict_alert records the
+            # emitted side for visibility; the hold-off is armed on send-ack (2xx)
+            # inside the send script, NOT here — a failed send must not silence the
+            # predictor.
+            - if:
+                condition:
+                  lambda: 'return !id(g_wake_handled);'
+                then:
+                  - lambda: |-
+                      id(g_wake_handled) = true;
+                      g_last_predict_alert = (AlertState) id(predict_fire_side);
+                  - script.execute: send_predicted_alert_and_sleep
+
+      # Low-battery check (early alert path) — fire once on ENTRY below
+      # BATT_WARN_PCT (latched in g_last_batt_alert), clear on recharge past
+      # BATT_RECOVER_PCT. NaN (gauge absent/unread) never alerts. Issue #42.
+      - if:
+          condition:
+            lambda: |-
+              float p = id(batt_pct).state;
+              return !std::isnan(p) && p < BATT_WARN_PCT && !g_last_batt_alert;
+          then:
+            # Guard (issue #53): if fault/CRIT already owns this wake, do NOT
+            # dispatch — leave g_last_batt_alert unset so the low-battery warning
+            # fires on a later wake instead of being silently swallowed. The
+            # latch is armed ONLY on a confirmed 2xx send (batt_latch_arm() in
+            # the send script's on_response) — NOT here; a failed send re-fires
+            # next wake (issue #14).
+            - if:
+                condition:
+                  lambda: 'return !id(g_wake_handled);'
+                then:
+                  - lambda: 'id(g_wake_handled) = true;'
+                  - script.execute: send_batt_alert_and_sleep
+          else:
+            - lambda: |-
+                float p = id(batt_pct).state;
+                if (!std::isnan(p) && p > BATT_RECOVER_PCT) g_last_batt_alert = false;
+
+      # Scheduled report every REPORT_EVERY wakes, OR immediately on a button
+      # (ext0) on-demand report (issue #6/#9 — user pressed the button to get a
+      # report now). Otherwise, below the protective floor (BATT_CRIT_V) the
+      # cadence report is skipped to conserve charge (the low-battery warning has
+      # already fired well above it; temp-CRIT alerts still send). A button press
+      # is an explicit user request and OVERRIDES the floor — a human is present
+      # and can recharge; the floor only guards the unattended cadence path.
+      # g_wake_count keeps counting, so a skipped cadence report fires on the next
+      # wake once recharged. Issues #6, #9, #42.
+      # NOTE: the button path routes into send_report_and_sleep, which clears the
+      # ring and resets the 4-h cadence on a successful send. Whether an on-demand
+      # report should instead preserve the accumulating window is an open decision
+      # owned by issue #9 — revisit there.
+      - if:
+          condition:
+            lambda: |-
+              if (id(g_button_wake)) return true;
+              if (!std::isnan(id(batt_v).state) && id(batt_v).state < BATT_CRIT_V)
+                return false;
+              return g_wake_count >= g_settings.report_every;   // persisted (issue #6)
+          then:
+            # If an early alert already owns this wake (issue #53), the report
+            # defers to the next wake — the ring is untouched by alert paths, so
+            # the deferred report still carries the full window, and g_wake_count
+            # is not reset so it re-evaluates as due next wake.
+            - if:
+                condition:
+                  lambda: 'return !id(g_wake_handled);'
+                then:
+                  - script.execute: send_report_and_sleep
+          else:
+            # Plain sampling wake: only sleep here if no send script is running.
+            # A dispatched alert script owns the sleep via its own deep_sleep.enter;
+            # calling a manual enter here would override its prevent and sleep the
+            # device mid-connect (the issue #53 bug).
+            - if:
+                condition:
+                  lambda: 'return !id(g_wake_handled);'
+                then:
+                  - deep_sleep.enter: deep_sleep_1
+
+  # Scheduled 4-hour report: enable WiFi, send digest, clear buffer, sleep.
+  - id: send_report_and_sleep
+    mode: single
+    then:
+      - deep_sleep.prevent: deep_sleep_1
+      - wifi.enable:
+      - wait_until:
+          condition: wifi.connected
+          timeout: 20s
+      # TLS cert validation needs a valid clock; the device cold-boots at
+      # epoch 1970 with Wi-Fi off, so wait for SNTP before any HTTPS send.
+      - wait_until:
+          condition:
+            lambda: 'return id(sntp_time).now().is_valid();'
+          timeout: 15s
+      - if:
+          condition: wifi.connected
+          then:
+            - component.update: wifi_rssi
+            - http_request.post:
+                url: !lambda |-
+                  return std::string("https://api.telegram.org/bot${telegram_bot_token}/sendMessage");
+                request_headers:
+                  Content-Type: application/json
+                body: !lambda |-
+                  uint32_t now_epoch = id(sntp_time).now().is_valid()
+                                         ? (uint32_t) id(sntp_time).now().timestamp : 0;
+                  std::string text = build_report((int)id(wifi_rssi).state, (uint32_t)(millis()/1000),
+                                                   id(batt_v).state, id(batt_pct).state,
+                                                   now_epoch, g_wake_count, id(g_button_wake),
+                                                   (uint32_t) g_settings.report_every
+                                                     * (uint32_t) g_settings.sample_interval_min);
+                  // with_device_tag: this chat also receives a sibling board's
+                  // messages, so every body is labelled "Stick C" up front.
+                  return std::string("{\"chat_id\":\"${telegram_chat_id}\",\"parse_mode\":\"HTML\",\"text\":\"") + json_escape(with_device_tag(text)) + "\"}";
+                # Clear only on a confirmed 2xx; otherwise keep the buffer and
+                # g_wake_count so the next 15-min wake retries the report.
+                on_response:
+                  then:
+                    - if:
+                        condition:
+                          lambda: 'return response->status_code >= 200 && response->status_code < 300;'
+                        then:
+                          - lambda: |-
+                              ring_clear();
+                              mark_send_ok(id(sntp_time).now().is_valid()   // issue #14
+                                             ? (uint32_t) id(sntp_time).now().timestamp : 0);
+                        else:
+                          - logger.log: "Report send failed — keeping buffer for retry next wake"
+          else:
+            - logger.log: "WiFi timeout — skipping report send"
+      # While the radio is up, poll Telegram for pending /set commands (issue
+      # #33 / #8): chat_id-filtered, dispatched to settings.h, cursor persisted.
+      - script.execute: poll_commands
+      - wait_until:
+          condition:
+            not:
+              script.is_running: poll_commands
+          timeout: 35s
+      - deep_sleep.enter: deep_sleep_1
+
+  # One-shot power-on boot notification. Fires only when g_first_boot is true
+  # (cold boot / power-on reset). Reads sensors, sends boot message, clears the
+  # flag, then hands off to wake_cycle for normal sampling. Does NOT clear the
+  # ring buffer or reset g_wake_count — the first scheduled report fires normally.
+  - id: send_boot_msg_and_continue
+    mode: single
+    then:
+      - delay: 100ms              # I²C settling margin (see wake_cycle)
+      - component.update: sht30_hub   # ENV II SHT30 hub; publishes temp_a
+      - component.update: dht12_hub   # ENV HAT DHT12 hub; publishes temp_b
+      - component.update: batt_v      # AXP192 cell voltage (ADR-022)
+      - component.update: batt_pct    # estimate SoC from the fresh voltage
+      # Same sht3xd deferred-publish wait as wake_cycle (see the comment there).
+      # This path happens to read temp_a much later — after the multi-second Wi-Fi
+      # connect — so it was masked, but relying on that accident is not a design.
+      - wait_until:
+          condition:
+            lambda: 'return !std::isnan(id(temp_a).state);'
+          timeout: 1s
+      - delay: 20ms
+      - deep_sleep.prevent: deep_sleep_1
+      - wifi.enable:
+      - wait_until:
+          condition: wifi.connected
+          timeout: 20s
+      # TLS cert validation needs a valid clock; the device cold-boots at
+      # epoch 1970 with Wi-Fi off, so wait for SNTP before any HTTPS send.
+      # 30s here (vs 15s in report/alert paths) because cold-boot SNTP is slower.
+      - wait_until:
+          condition:
+            lambda: 'return id(sntp_time).now().is_valid();'
+          timeout: 30s
+      - if:
+          condition: wifi.connected
+          then:
+            - component.update: wifi_rssi
+            - http_request.post:
+                url: !lambda |-
+                  return std::string("https://api.telegram.org/bot${telegram_bot_token}/sendMessage");
+                request_headers:
+                  Content-Type: application/json
+                body: !lambda |-
+                  std::string text = build_boot_msg(
+                    id(temp_a).state, id(temp_b).state,
+                    (int)id(wifi_rssi).state, (uint32_t)(millis()/1000),
+                    id(sntp_time).now().is_valid() ? (uint32_t)id(sntp_time).now().timestamp : 0,
+                    (uint32_t) g_settings.report_every * (uint32_t) g_settings.sample_interval_min,  // persisted (issue #6)
+                    id(batt_v).state, id(batt_pct).state);
+                  // with_device_tag: this chat also receives a sibling board's
+                  // messages, so every body is labelled "Stick C" up front.
+                  return std::string("{\"chat_id\":\"${telegram_chat_id}\",\"parse_mode\":\"HTML\",\"text\":\"") + json_escape(with_device_tag(text)) + "\"}";
+          else:
+            - logger.log: "WiFi timeout — boot message not sent"
+      # Radio is up here too — poll for pending commands (issue #33 / #8). This
+      # makes a button-triggered boot wake an on-demand command check. The
+      # follow-on wake_cycle may poll again if it sends a report/alert; the second
+      # poll just finds an empty queue (offset already advanced), so it's a no-op.
+      - script.execute: poll_commands
+      - wait_until:
+          condition:
+            not:
+              script.is_running: poll_commands
+          timeout: 35s
+      - lambda: 'g_first_boot = false;'
+      # Do NOT wifi.disable here (issue #56). The boot wake hands straight to
+      # wake_cycle, which may need to send an early alert (e.g. box CRIT at boot).
+      # Tearing Wi-Fi down forces that alert's send script to re-associate from
+      # scratch, which does not complete inside its wait_until window → the alert
+      # times out and is silently dropped (and, being latched via g_last_alert,
+      # never retried). Leaving Wi-Fi associated lets the alert send immediately;
+      # if the boot wake is quiet, deep_sleep.enter powers Wi-Fi off anyway.
+      - script.execute: wake_cycle
+
+  # Out-of-schedule CRIT alert: enable WiFi, send alert, do NOT clear buffer, sleep.
+  # The ring buffer is intentionally left intact so the next scheduled report
+  # includes the full window including the samples that triggered the alert.
+  - id: send_crit_alert_and_sleep
+    mode: single
+    then:
+      - deep_sleep.prevent: deep_sleep_1
+      - wifi.enable:
+      - wait_until:
+          condition: wifi.connected
+          timeout: 20s
+      # TLS cert validation needs a valid clock; the device cold-boots at
+      # epoch 1970 with Wi-Fi off, so wait for SNTP before any HTTPS send.
+      - wait_until:
+          condition:
+            lambda: 'return id(sntp_time).now().is_valid();'
+          timeout: 15s
+      - if:
+          condition: wifi.connected
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  return std::string("https://api.telegram.org/bot${telegram_bot_token}/sendMessage");
+                request_headers:
+                  Content-Type: application/json
+                body: !lambda |-
+                  AlertState a = alert_state_live(id(temp_a).state, true);
+                  AlertState b = alert_state_live(id(temp_b).state, false);
+                  // #65/#18: a reminder or escalation re-send prefixes the body; an
+                  // entry (or a plain first alert) prefixes nothing.
+                  std::string text = realert_prefix((ReAlertReason) id(g_crit_realert_reason));
+                  if (is_crit(a)) text += build_crit_alert("Box", true, id(temp_a).state, a);
+                  if (is_crit(b)) {
+                    if (!text.empty() && text.back() != '\n') text += "\n";
+                    text += build_crit_alert("Fridge", false, id(temp_b).state, b);
+                  }
+                  uint32_t now_epoch = id(sntp_time).now().is_valid()
+                                         ? (uint32_t) id(sntp_time).now().timestamp : 0;
+                  text += alert_footer(id(batt_v).state, id(batt_pct).state, now_epoch);
+                  // with_device_tag: this chat also receives a sibling board's
+                  // messages, so every body is labelled "Stick C" up front.
+                  return std::string("{\"chat_id\":\"${telegram_chat_id}\",\"parse_mode\":\"HTML\",\"text\":\"") + json_escape(with_device_tag(text)) + "\"}";
+                # Arm the CRIT hold-off + re-alert episode ONLY on a confirmed 2xx
+                # (send-ack), not at dispatch — a failed send must not silence the
+                # CRIT path, so it retries on the next wake (issue #14/#65/#18).
+                # crit_latch_arm() holds the entry hold-off; the reason drives the
+                # #65/#18 episode clocks: ENTRY begins the episode, REMINDER/
+                # ESCALATION advance it (escalation moves the baseline + spends budget).
+                on_response:
+                  then:
+                    - if:
+                        condition:
+                          lambda: 'return response->status_code >= 200 && response->status_code < 300;'
+                        then:
+                          - lambda: |-
+                              crit_latch_arm(alert_state_live(id(temp_a).state, true),
+                                             alert_state_live(id(temp_b).state, false));
+                              int reason = id(g_crit_realert_reason);
+                              if (reason == REALERT_ENTRY)
+                                crit_episode_begin(is_crit(alert_state_live(id(temp_a).state, true)),
+                                                   id(temp_a).state);
+                              else
+                                crit_realert_arm((ReAlertReason) reason, id(temp_a).state);
+                              mark_send_ok(id(sntp_time).now().is_valid()
+                                             ? (uint32_t) id(sntp_time).now().timestamp : 0);
+                        else:
+                          - logger.log: "CRIT send failed — hold-off not armed, retry next wake"
+          else:
+            - logger.log: "WiFi timeout — CRIT alert not sent"
+      # A /set sent in reply to this CRIT alert is picked up right here (issue #33).
+      - script.execute: poll_commands
+      - wait_until:
+          condition:
+            not:
+              script.is_running: poll_commands
+          timeout: 35s
+      - deep_sleep.enter: deep_sleep_1
+
+  # Out-of-schedule PREDICTED BREACH alert (ADR-013 / issue #3): enable WiFi, send
+  # the projection, do NOT clear the buffer, sleep. Sibling of the CRIT-alert
+  # transport. The hold-off is armed ONLY on a confirmed 2xx (send-ack), not at
+  # dispatch — a failed send must not silence the predictor, so it retries on the
+  # next wake. The fired side is in g_last_predict_alert (set by the caller); the
+  # message body re-reads the current smoothed projection for the minutes-to-limit.
+  - id: send_predicted_alert_and_sleep
+    mode: single
+    then:
+      - deep_sleep.prevent: deep_sleep_1
+      - wifi.enable:
+      - wait_until:
+          condition: wifi.connected
+          timeout: 20s
+      # TLS cert validation needs a valid clock; the device cold-boots at
+      # epoch 1970 with Wi-Fi off, so wait for SNTP before any HTTPS send.
+      - wait_until:
+          condition:
+            lambda: 'return id(sntp_time).now().is_valid();'
+          timeout: 15s
+      - if:
+          condition: wifi.connected
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  return std::string("https://api.telegram.org/bot${telegram_bot_token}/sendMessage");
+                request_headers:
+                  Content-Type: application/json
+                body: !lambda |-
+                  // #18: an ETA-collapse escalation prefixes the body; a normal
+                  // predictor_step() fire prefixes nothing.
+                  std::string text = id(predict_is_escal)
+                                       ? realert_prefix(REALERT_ESCALATION) : std::string();
+                  text += build_predict_alert(
+                    g_last_predict_alert, id(temp_a).state, id(temp_b).state,
+                    predictor_t_min());
+                  uint32_t now_epoch = id(sntp_time).now().is_valid()
+                                         ? (uint32_t) id(sntp_time).now().timestamp : 0;
+                  text += alert_footer(id(batt_v).state, id(batt_pct).state, now_epoch);
+                  // with_device_tag: this chat also receives a sibling board's
+                  // messages, so every body is labelled "Stick C" up front.
+                  return std::string("{\"chat_id\":\"${telegram_chat_id}\",\"parse_mode\":\"HTML\",\"text\":\"") + json_escape(with_device_tag(text)) + "\"}";
+                # Arm the hold-off only on a confirmed 2xx (send-ack). On any other
+                # outcome leave it unarmed so the predictor re-fires next wake. A
+                # normal fire records the ETA baseline (predict_alert_record) for the
+                # #18 halving test; an escalation moves the baseline + spends budget.
+                on_response:
+                  then:
+                    - if:
+                        condition:
+                          lambda: 'return response->status_code >= 200 && response->status_code < 300;'
+                        then:
+                          - lambda: |-
+                              if (id(predict_is_escal)) {
+                                predict_escalation_arm(predictor_t_min());
+                              } else {
+                                predict_holdoff_arm();
+                                predict_alert_record(predictor_t_min());
+                              }
+                              mark_send_ok(id(sntp_time).now().is_valid()   // issue #14
+                                             ? (uint32_t) id(sntp_time).now().timestamp : 0);
+                        else:
+                          - logger.log: "Predicted-breach send failed — hold-off not armed, retry next wake"
+          else:
+            - logger.log: "WiFi timeout — predicted-breach alert not sent"
+      - script.execute: poll_commands
+      - wait_until:
+          condition:
+            not:
+              script.is_running: poll_commands
+          timeout: 35s
+      - deep_sleep.enter: deep_sleep_1
+
+  # Out-of-schedule SENSOR FAULT alert (issue #12): enable WiFi, send the fault
+  # notice, do NOT clear the buffer, sleep. Fires once per fault entry (per-sensor
+  # g_fault_latch_*, set by the caller); mirrors the CRIT-alert transport. Names
+  # whichever sensor(s) are faulted and why (NaN / stuck 0C / stale). The ring is
+  # left intact so the next scheduled report still carries the window.
+  - id: send_fault_alert_and_sleep
+    mode: single
+    then:
+      - deep_sleep.prevent: deep_sleep_1
+      - wifi.enable:
+      - wait_until:
+          condition: wifi.connected
+          timeout: 20s
+      # TLS cert validation needs a valid clock; the device cold-boots at
+      # epoch 1970 with Wi-Fi off, so wait for SNTP before any HTTPS send.
+      - wait_until:
+          condition:
+            lambda: 'return id(sntp_time).now().is_valid();'
+          timeout: 15s
+      - if:
+          condition: wifi.connected
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  return std::string("https://api.telegram.org/bot${telegram_bot_token}/sendMessage");
+                request_headers:
+                  Content-Type: application/json
+                body: !lambda |-
+                  std::string text = build_fault_alert();
+                  uint32_t now_epoch = id(sntp_time).now().is_valid()
+                                         ? (uint32_t) id(sntp_time).now().timestamp : 0;
+                  text += alert_footer(id(batt_v).state, id(batt_pct).state, now_epoch);
+                  // with_device_tag: this chat also receives a sibling board's
+                  // messages, so every body is labelled "Stick C" up front.
+                  return std::string("{\"chat_id\":\"${telegram_chat_id}\",\"parse_mode\":\"HTML\",\"text\":\"") + json_escape(with_device_tag(text)) + "\"}";
+                # Latch the per-sensor fault ONLY on a confirmed 2xx (send-ack),
+                # not at dispatch — a failed send re-fires next wake (issue #14).
+                on_response:
+                  then:
+                    - if:
+                        condition:
+                          lambda: 'return response->status_code >= 200 && response->status_code < 300;'
+                        then:
+                          - lambda: |-
+                              fault_latch_arm(sensor_faulted(true), sensor_faulted(false));
+                              mark_send_ok(id(sntp_time).now().is_valid()
+                                             ? (uint32_t) id(sntp_time).now().timestamp : 0);
+                        else:
+                          - logger.log: "Fault send failed — latch not set, retry next wake"
+          else:
+            - logger.log: "WiFi timeout — sensor-fault alert not sent"
+      - script.execute: poll_commands
+      - wait_until:
+          condition:
+            not:
+              script.is_running: poll_commands
+          timeout: 35s
+      - deep_sleep.enter: deep_sleep_1
+
+  # Out-of-schedule LOW BATTERY alert (issue #42): enable WiFi, send the warning,
+  # do NOT clear the buffer, sleep. Fires once per depletion (g_last_batt_alert
+  # latch, set by the caller); mirrors the CRIT-alert transport. The StickC's
+  # onboard cell is the sole supply, so this is the cue to recharge over USB-C
+  # before it dies and RTC memory (the buffer) is lost. On this board the cell is
+  # small (~95 mAh, ADR-022), so the warning gives far less notice than the
+  # retired 18650 did — treat it as urgent.
+  - id: send_batt_alert_and_sleep
+    mode: single
+    then:
+      - deep_sleep.prevent: deep_sleep_1
+      - wifi.enable:
+      - wait_until:
+          condition: wifi.connected
+          timeout: 20s
+      # TLS cert validation needs a valid clock; the device cold-boots at
+      # epoch 1970 with Wi-Fi off, so wait for SNTP before any HTTPS send.
+      - wait_until:
+          condition:
+            lambda: 'return id(sntp_time).now().is_valid();'
+          timeout: 15s
+      - if:
+          condition: wifi.connected
+          then:
+            - http_request.post:
+                url: !lambda |-
+                  return std::string("https://api.telegram.org/bot${telegram_bot_token}/sendMessage");
+                request_headers:
+                  Content-Type: application/json
+                body: !lambda |-
+                  std::string text = build_batt_alert(id(batt_v).state, id(batt_pct).state);
+                  std::string ts = id(sntp_time).now().is_valid()
+                                     ? hhmm_utc((uint32_t) id(sntp_time).now().timestamp) : std::string();
+                  if (!ts.empty()) text += "\n<i>" + ts + " UTC</i>";
+                  // with_device_tag: this chat also receives a sibling board's
+                  // messages, so every body is labelled "Stick C" up front.
+                  return std::string("{\"chat_id\":\"${telegram_chat_id}\",\"parse_mode\":\"HTML\",\"text\":\"") + json_escape(with_device_tag(text)) + "\"}";
+                # Latch the once-per-depletion warning ONLY on a confirmed 2xx
+                # (send-ack), not at dispatch — a failed send re-fires next wake
+                # (issue #14).
+                on_response:
+                  then:
+                    - if:
+                        condition:
+                          lambda: 'return response->status_code >= 200 && response->status_code < 300;'
+                        then:
+                          - lambda: |-
+                              batt_latch_arm();
+                              mark_send_ok(id(sntp_time).now().is_valid()
+                                             ? (uint32_t) id(sntp_time).now().timestamp : 0);
+                        else:
+                          - logger.log: "Low-battery send failed — latch not set, retry next wake"
+          else:
+            - logger.log: "WiFi timeout — low-battery alert not sent"
+      - script.execute: poll_commands
+      - wait_until:
+          condition:
+            not:
+              script.is_running: poll_commands
+          timeout: 35s
+      - deep_sleep.enter: deep_sleep_1
+
+  # Inbound Telegram command channel (issue #33 / #8) — the PULL half of the
+  # radio wake. Called at the end of every Wi-Fi-up send script, AFTER the
+  # outbound sendMessage and while the radio is still associated, so it costs one
+  # extra HTTPS round trip per report/alert wake (not per sampling wake — that
+  # would break ADR-006). It:
+  #   1. GETs getUpdates from the persisted cursor (g_settings.update_offset),
+  #   2. hands each pending "/set…" line from the AUTHORISED chat to the same
+  #      settings.h write path the web UI uses (all guardrails already there),
+  #   3. advances + NVS-persists the cursor so nothing re-delivers after a power
+  #      cycle (RuntimeSettings.update_offset is NVS-backed, issue #4),
+  #   4. posts one consolidated ack (old→new / rejection / usage) if non-empty.
+  # See ADR-016. Callers wait on this via `not script.is_running` before sleeping.
+  - id: poll_commands
+    mode: single
+    then:
+      - lambda: 'g_cmd_reply.clear();'
+      - if:
+          condition: wifi.connected
+          then:
+            - http_request.get:
+                url: !lambda |-
+                  char off[24];
+                  snprintf(off, sizeof(off), "%u", (unsigned) g_settings.update_offset);
+                  return std::string("https://api.telegram.org/bot${telegram_bot_token}"
+                                     "/getUpdates?timeout=0&limit=10"
+                                     "&allowed_updates=%5B%22message%22%5D&offset=") + off;
+                capture_response: true
+                # Each update carries a full from/chat object (~0.5 KB); the 1 KB
+                # default would truncate a multi-command batch and break the JSON
+                # parse. Size for ~10 pending commands.
+                max_response_buffer_size: 6144
+                on_response:
+                  then:
+                    - lambda: |-
+                        if (response->status_code < 200 || response->status_code >= 300) {
+                          ESP_LOGW("poll", "getUpdates HTTP %d — skipping", response->status_code);
+                          return;
+                        }
+                        uint32_t before = g_settings.update_offset;
+                        poll_updates_json(body, "${telegram_chat_id}",
+                                          g_settings.update_offset, g_cmd_reply);
+                        ESP_LOGI("poll", "getUpdates ok: cursor %u->%u, %u ack byte(s)",
+                                 (unsigned) before, (unsigned) g_settings.update_offset,
+                                 (unsigned) g_cmd_reply.size());
+                        // Persist the advanced cursor BEFORE we sleep so a bank/cell
+                        // cutoff can't replay these commands (Done-when: no replay).
+                        if (g_settings.update_offset != before) settings_store();
+            # One consolidated reply for the whole batch, only if something acked.
+            - if:
+                condition:
+                  lambda: 'return !g_cmd_reply.empty();'
+                then:
+                  - http_request.post:
+                      url: !lambda |-
+                        return std::string("https://api.telegram.org/bot${telegram_bot_token}/sendMessage");
+                      request_headers:
+                        Content-Type: application/json
+                      body: !lambda |-
+                        // Plain-text send (no parse_mode) — it echoes raw user
+                        // input that may contain < or >, so the label must be
+                        // the untagged form too (with_device_tag html=false).
+                        return std::string("{\"chat_id\":\"${telegram_chat_id}\",\"text\":\"")
+                               + json_escape(with_device_tag(g_cmd_reply, false)) + "\"}";
+                      on_response:
+                        then:
+                          - lambda: 'ESP_LOGI("poll", "command reply HTTP %d", response->status_code);'
+          else:
+            - logger.log: "WiFi down at poll — skipping command check this wake"

@@ -1,0 +1,12 @@
+# Secrets — never commit. Copy secrets.yaml.example to secrets.yaml and fill in.
+secrets.yaml
+secrets_*.yaml
+
+# ESPHome build artifacts
+.esphome/
+*.bin
+*.elf
+
+# Editor / OS cruft
+.DS_Store
+*.swp
