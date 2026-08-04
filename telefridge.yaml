@@ -224,7 +224,7 @@ time:
       - 216.239.35.4    # time.google.com alt
       - 162.159.200.123 # time.cloudflare.com alt
 
-# The ISP line's direct IPv4 WAN path drops TCP (issue #24; likely
+# The home ISP line's direct IPv4 WAN path drops TCP (issue #24; likely
 # DS-Lite/CGNAT). IPv6 gives the device the same working path the rest of
 # the network uses. Harmless if the router offers no IPv6 (SLAAC just fails).
 network:

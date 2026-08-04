@@ -270,7 +270,7 @@ inline std::string build_time_iso() {
   }
   int day  = (d[4] == ' ') ? (d[5] - '0') : ((d[4] - '0') * 10 + (d[5] - '0'));
   int year = (d[7]-'0')*1000 + (d[8]-'0')*100 + (d[9]-'0')*10 + (d[10]-'0');
-  char buf[20];
+  char buf[24];
   snprintf(buf, sizeof(buf), "%04d-%02d-%02d %c%c:%c%c",
     year, month, day, t[0], t[1], t[3], t[4]);
   return std::string(buf);

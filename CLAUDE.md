@@ -4,6 +4,12 @@
 > It is the single source of truth for this project.
 > Sections marked **LOCKED** must not be changed without an explicit ADR.
 
+> ⚠️ **Licence & disclaimer.** Licensed under **GPL-3.0-or-later** (see
+> [`LICENSE`](./LICENSE)). This is a hobbyist project provided **"as is", with NO
+> WARRANTY** — it is **not a medical device** and must **not** be used as the
+> sole safeguard for insulin, vaccines, or any temperature-sensitive payload.
+> See [`DISCLAIMER.md`](./DISCLAIMER.md) before use.
+
 ---
 
 ## Project overview
@@ -790,7 +796,7 @@ directly in the YAML.
 | `temp_b` erratic / drifting high | (a) DHT12 in condensing fridge air — DHT-family parts are unreliable there; (b) HAT self-heating from the ESP32/AXP192 | Add an offset `filter:`; if unreliable, switch `temp_b` to the same HAT's BMP280 @0x76 via `platform: bmp280_i2c` (YAML-only swap) |
 | Logger dies / resets randomly | Onboard cell depleted (sole supply, ADR-022) — only ~95 mAh, so this happens far sooner than it did on the 18650 | Recharge over USB-C; heed the low-battery Telegram warning, and treat it as urgent on this board |
 | Report never sends | Wi-Fi never enabled (enable_on_boot:false) and `wifi.enable` not called on report wake | Ensure report/alert path calls `wifi.enable` and waits for connect before send |
-| `ESP_ERR_HTTP_CONNECT` / `sock < 0` / esp-tls `select() timeout` (issue #24) | **Hotspot A/B test (2026-07-07) confirmed device + firmware are fine**: flashed with phone-hotspot credentials, WiFi connected at full signal, HTTP POST succeeded, Telegram message received — no TCP errors. Failure is 100% router/ISP-side on the home ISP line. Leading suspects: (1) DS-Lite/CGNAT on ISP dropping outbound TCP from small devices — `enable_ipv6: true` already in config; check boot log for SLAAC address on home router; (2) 2.4 GHz channel congestion at −70 dBm; (3) per-device ACL on ISP box (ESP32 MAC: `REDACTED-MAC`). | Check router: IPv6 SLAAC assigned? 2.4 GHz channel (use 1/6/11)? Per-device firewall rules? Then soak ≥3 report wakes on home router. |
+| `ESP_ERR_HTTP_CONNECT` / `sock < 0` / esp-tls `select() timeout` (issue #24) | **Hotspot A/B test (2026-07-07) confirmed device + firmware are fine**: flashed with phone-hotspot credentials, WiFi connected at full signal, HTTP POST succeeded, Telegram message received — no TCP errors. Failure is 100% router/ISP-side on the home line. Leading suspects: (1) DS-Lite/CGNAT on the ISP dropping outbound TCP from small devices — `enable_ipv6: true` already in config; check boot log for SLAAC address on home router; (2) 2.4 GHz channel congestion at −70 dBm; (3) per-device ACL on the home router (by the ESP32's MAC). | Check router: IPv6 SLAAC assigned? 2.4 GHz channel (use 1/6/11)? Per-device firewall rules? Then soak ≥3 report wakes on home router. |
 | Mac-side network tests mislead | The Mac runs a VPN whose kill-switch firewall blocks non-tunnel traffic — `curl --interface en0` failures measure the Mac's firewall, not the router; successes with VPN on exercise the tunnel path | Disable the VPN before using the Mac as a network reference; prefer on-device probes or a hotspot A/B |
 | Buffer empty every report | Full power loss (cell fully depleted or unplugged) wiped RTC memory | Recharge before the cell dies — the low-battery warning + protective floor exist to prevent this; otherwise accept digest gaps |
 | Sensors on the wrong bus / one never appears | Each device must name its `i2c_id` — two buses exist and the two sensors are on separate connectors | `bus_box` = G32/G33 (SHT30 0x44), `bus_fridge` = G0/G26 (DHT12 0x5C); confirm both in the boot scan. The AXP192 (G21/G22, 0x34) is bit-banged and will **not** appear in any scan (ADR-023) |
@@ -1475,8 +1481,8 @@ item 9, so do it first. Nothing here has been near a fridge yet.
       `MBEDTLS_HAVE_TIME_DATE` off, so cert validity dates are not checked —
       the SNTP wait mainly gives real epochs to the ring buffer.
 - [x] Issue #24 closed (2026-07-07): intermittent TCP failures were router-side.
-      Root cause: ISP router was band-steering 2.4/5 GHz under a single SSID;
-      separating them into dedicated SSIDs (`a dedicated 2.4 GHz SSID`) resolved the issue.
+      Root cause: the home router was band-steering 2.4/5 GHz under a single SSID;
+      separating them into a dedicated 2.4 GHz SSID resolved the issue.
       Confirmed: boot message, boot-then-report cycle (3-min stress test at 10s
       interval), and second report all succeeded with zero TCP errors on the home
-      router. Network: `a dedicated 2.4 GHz SSID`, credentials in `secrets.yaml`.
+      router. Network: a dedicated 2.4 GHz SSID, credentials in `secrets.yaml`.

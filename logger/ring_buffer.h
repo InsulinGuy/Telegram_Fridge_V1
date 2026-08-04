@@ -173,8 +173,10 @@ inline Digest ring_summary() {
   for (uint16_t i = 0; i < g_ring_count; i++) {
     float a = g_ring[i].temp_a, b = g_ring[i].temp_b;
     sa += a; sb += b;
-    if (a < d.min_a) d.min_a = a; if (a > d.max_a) d.max_a = a;
-    if (b < d.min_b) d.min_b = b; if (b > d.max_b) d.max_b = b;
+    if (a < d.min_a) d.min_a = a;
+    if (a > d.max_a) d.max_a = a;
+    if (b < d.min_b) d.min_b = b;
+    if (b > d.max_b) d.max_b = b;
     if (alert_state(a, /*is_box=*/true)  != ALERT_OK) d.n_out_a++;
     if (alert_state(b, /*is_box=*/false) != ALERT_OK) d.n_out_b++;
     // Window bounds by min/max over valid epochs. Index order is NOT time order

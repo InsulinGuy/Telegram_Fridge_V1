@@ -8,7 +8,7 @@
             "type": "command",
             "if": "Bash(esphome *)",
             "statusMessage": "Stamping git version...",
-            "command": "jq -r '.tool_input.command' | { read -r cmd; echo \"$cmd\" | grep -qE 'esphome (run|compile)' && python3 $CLAUDE_PROJECT_DIR/scripts/stamp_version.py || true; }"
+            "command": "jq -r '.tool_input.command' | { read -r cmd; echo \"$cmd\" | grep -qE 'esphome (run|compile)' && python3 \"$CLAUDE_PROJECT_DIR/scripts/stamp_version.py\" || true; }"
           }
         ]
       }
