@@ -22,5 +22,21 @@ button press, alert)
 
 **Logs** — serial output or the Telegram message, whichever is relevant.
 
-> Please redact your Wi-Fi SSID, bot token and chat ID before pasting. Logs
-> print more than you might expect.
+> ⚠️ **Redact before pasting — logs print more than you might expect.**
+>
+> The one that catches people out: on a failed or non-2xx send, ESPHome logs the
+> **whole URL, and your bot token is inside it**. It looks like this, and no log
+> level hides it (it is logged at ERROR):
+>
+> ```
+> [E][http_request]: HTTP Request failed; URL: https://api.telegram.org/bot123456789:AAH...rest-of-your-token.../sendMessage; Code: 0
+> ```
+>
+> Search your log for `api.telegram.org` and replace everything between `/bot`
+> and `/sendMessage` (or `/getUpdates`) with `<REDACTED>`. Also redact your
+> **Wi-Fi SSID** and **chat ID**.
+>
+> **If you have already posted a token anywhere, rotate it now:** message
+> [@BotFather](https://t.me/botfather), send `/revoke`, pick the bot, and put the
+> new token in `secrets.yaml`. Assume a token that was public for even a moment
+> is compromised — see [`SECURITY.md`](../../SECURITY.md).
