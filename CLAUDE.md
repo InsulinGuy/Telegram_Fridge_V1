@@ -564,6 +564,7 @@ telefridge_StickC_V1/
 ├── .gitignore                ← secrets.yaml / secrets_*.yaml / *.bak + build artifacts
 ├── LICENSE                   ← GPL-3.0-or-later
 ├── DISCLAIMER.md             ← liability / not-a-medical-device disclaimer
+├── CONTRIBUTING.md           ← contributor rules; restates the LOCKED 2–8 °C bounds + sensor roles
 ├── .claude/settings.json     ← PreToolUse hook: runs scripts/stamp_version.py before any esphome run/compile
 ├── .github/workflows/        ← release CI (tag push → GitHub Release) + host-test CI
 ├── certs/

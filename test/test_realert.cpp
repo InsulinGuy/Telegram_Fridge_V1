@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Insulin Guy and the TeleFridge contributors.
+// This file is part of TeleFridge. It comes with ABSOLUTELY NO WARRANTY and is
+// NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 // Host-compiled unit tests for logger/realert.h — the #65 CRIT re-alert reminder
 // and the #18 worsening escalation (ADR-019), both riding the ADR-018 send-ack
 // discipline. Same host trick as the sibling suites: RTC_DATA_ATTR is defined away

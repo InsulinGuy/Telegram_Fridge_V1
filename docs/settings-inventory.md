@@ -1,5 +1,9 @@
 # Runtime settings inventory & guardrails — TeleFridge V1
 
+> **`#NN` references in this document cite the original `telefridge_V1` tracker**
+> that this repo was split out of (ADR-025), not this repo's issues — the same
+> numbers mean different things here.
+
 > **Status:** Phase 1 spec (issue #32). This is the authoritative inventory that
 > **#4** (`logger/settings.h`, the Telegram `/set*` command channel) codes
 > against, and the guardrail contract **#31/#48**'s on-device web UI must mirror.

@@ -201,7 +201,16 @@ keeping your insulin safe. It also keeps the whole setup **readable and
 tweakable** — the configuration is a plain text file, not a locked-down black box —
 so anyone can see exactly what the device does and adjust it to their own fridge.
 
+## Contributing
+
+Improvements are welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md). One rule
+worth knowing up front: the **2–8 °C box limits are the medical compliance line
+and are locked**, so a change that loosens them needs a documented argument, not
+just a patch.
+
 ## License
+
+Copyright © 2026 Insulin Guy and the TeleFridge contributors.
 
 Free and open source under **[GPL-3.0-or-later](./LICENSE)**. A hobbyist project,
 provided with **no warranty** — please read the [`DISCLAIMER.md`](./DISCLAIMER.md)

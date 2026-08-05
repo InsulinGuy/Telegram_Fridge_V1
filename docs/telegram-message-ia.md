@@ -1,5 +1,9 @@
 # Telegram message information architecture & HTML formatting — TeleFridge V1
 
+> **`#NN` references in this document cite the original `telefridge_V1` tracker**
+> that this repo was split out of (ADR-025), not this repo's issues — the same
+> numbers mean different things here.
+
 > **Status:** design spec (issue **#63**). This is the authoritative spec that the
 > `logger/report.h` rework codes against. Values and line references here track
 > `logger/report.h`, `logger/ring_buffer.h`, `logger/helpers.h` and

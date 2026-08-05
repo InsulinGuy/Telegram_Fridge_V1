@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Insulin Guy and the TeleFridge contributors.
+# This file is part of TeleFridge. It comes with ABSOLUTELY NO WARRANTY and is
+# NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 """Stamp FW_VERSION in logger/build_number.h with `git describe` output.
 Called by Claude Code PreToolUse hook before esphome run/compile."""
 import subprocess, re, pathlib, sys

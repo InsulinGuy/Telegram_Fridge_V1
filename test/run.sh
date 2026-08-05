@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Insulin Guy and the TeleFridge contributors.
+# This file is part of TeleFridge. It comes with ABSOLUTELY NO WARRANTY and is
+# NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 # Host-compile and run the logger unit tests (no hardware needed). See issue #2.
 set -euo pipefail
 cd "$(dirname "$0")/.."

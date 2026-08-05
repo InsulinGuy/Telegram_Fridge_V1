@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Insulin Guy and the TeleFridge contributors.
+// This file is part of TeleFridge. It comes with ABSOLUTELY NO WARRANTY and is
+// NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 #pragma once
 // TeleFridge V1 — alert state machine + thresholds.
 // See CLAUDE.md "Thresholds & alerts". Mechanism is LOCKED; the numeric
@@ -34,7 +38,9 @@ constexpr float THRESH_BOX_WARN_HIGH = 7.0f;
 constexpr float THRESH_BOX_CRIT_HIGH = 8.0f;
 
 // Fridge ambient (temp_b) — advisory, wider bands shifted lower. TUNE to the
-// real appliance's duty cycle; its absolute CRIT is batched, not an early alert.
+// real appliance's duty cycle. Advisory in AUTHORITY (the box is the compliance
+// line), but a fridge CRIT still fires an early alert — see wake_cycle's
+// is_crit(a) || is_crit(b). Only WARN is batched, and only the box re-alerts.
 constexpr float THRESH_FRIDGE_CRIT_LOW  = 0.0f;
 constexpr float THRESH_FRIDGE_WARN_LOW  = 2.0f;
 constexpr float THRESH_FRIDGE_WARN_HIGH = 6.0f;

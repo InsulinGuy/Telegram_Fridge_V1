@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Insulin Guy and the TeleFridge contributors.
+# This file is part of TeleFridge. It comes with ABSOLUTELY NO WARRANTY and is
+# NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 """Reset the ESP32 via RTS and capture serial output from t=0.
 
 Usage: capture_boot.py [seconds] [port]   (default 120s, port auto-detected)

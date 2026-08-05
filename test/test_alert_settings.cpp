@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Insulin Guy and the TeleFridge contributors.
+// This file is part of TeleFridge. It comes with ABSOLUTELY NO WARRANTY and is
+// NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 // Host-compiled unit tests for the settings-aware zone classification
 // (issue #50): alert_state_live() in logger/settings.h.
 //

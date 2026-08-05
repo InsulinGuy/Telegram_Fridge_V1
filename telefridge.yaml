@@ -1,7 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Insulin Guy and the TeleFridge contributors.
+# This file is part of TeleFridge. It comes with ABSOLUTELY NO WARRANTY and is
+# NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 # TeleFridge V1 — main ESPHome config. Target board: M5StickC (ADR-020).
 #
 # Items marked TODO/VERIFY must be checked on real hardware before relying on
 # them. See CLAUDE.md for the locked design and rationale behind every choice.
+#
+# NOTE ON `#NN` REFERENCES: every issue number in this file cites the ORIGINAL
+# `telefridge_V1` tracker, which this repo was split out of (ADR-025). They are
+# historical citations — they do NOT correspond to issues or PRs in this repo,
+# where the same numbers mean different things.
 #
 # This config was ported from the Adafruit ESP32 Feather V2, which is retired as
 # a target. The port is board-local by construction: temp_a / temp_b / batt_v /
@@ -23,6 +32,9 @@ substitutions:
 
 esphome:
   name: ${device_name}
+  # Developed and validated on ESPHome 2026.4.5. Pinning the floor turns "an
+  # older ESPHome silently misbehaves" into a clear error at config time.
+  min_version: 2026.4.5
   includes:
     - logger/axp192.h
     - logger/build_number.h

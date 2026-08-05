@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Tests
+
+# Host unit tests only — no hardware and no ESPHome toolchain needed. test/run.sh
+# compiles each logger/*.h suite with plain c++17 (RTC_DATA_ATTR is defined away),
+# so this runs in seconds and gates every push and pull request.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run host unit tests
+        run: ./test/run.sh

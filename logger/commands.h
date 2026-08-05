@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Insulin Guy and the TeleFridge contributors.
+// This file is part of TeleFridge. It comes with ABSOLUTELY NO WARRANTY and is
+// NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 #pragma once
 // TeleFridge V1 — inbound Telegram command channel (issue #33 / #8).
 //

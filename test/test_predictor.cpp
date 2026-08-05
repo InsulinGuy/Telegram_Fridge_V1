@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Insulin Guy and the TeleFridge contributors.
+// This file is part of TeleFridge. It comes with ABSOLUTELY NO WARRANTY and is
+// NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 // Host-compiled unit tests for logger/predictor.h (issue #3).
 //
 // Same host trick as test_ring_buffer.cpp: RTC_DATA_ATTR is defined away so the
