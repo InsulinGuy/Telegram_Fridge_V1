@@ -2,7 +2,10 @@
 """Reset the ESP32 via RTS and capture serial output from t=0.
 
 Usage: capture_boot.py [seconds] [port]   (default 120s, port auto-detected)
-Bring-up aid for issue #24 debugging; safe to delete afterwards.
+
+A general hardware bring-up aid, not tied to any one investigation: it is the
+tool for watching a wake cycle end-to-end, and for the open bring-up items
+(holding the sleep interval, measuring the wake profile).
 
 NOTE: an RTS reset PRESERVES RTC slow memory, so g_first_boot stays false and no
 boot message is sent. To force a true cold boot on the M5StickC, hold the power
