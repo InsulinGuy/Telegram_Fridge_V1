@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 380 250" width="380" height="250" font-family="Helvetica, Arial, sans-serif" role="img" aria-label="Mockup of a TeleFridge critical alert message in Telegram: Box critical high at 8.4 degrees Celsius, above the 8.0 degree limit, with the fridge also warm suggesting appliance failure.">
+  <defs>
+    <clipPath id="cardA"><rect x="0" y="0" width="380" height="250" rx="22"/></clipPath>
+  </defs>
+  <g clip-path="url(#cardA)">
+    <rect x="0" y="0" width="380" height="250" fill="#d9e2ea"/>
+    <!-- header -->
+    <rect x="0" y="0" width="380" height="60" fill="#5288c1"/>
+    <circle cx="42" cy="30" r="17" fill="#ffffff"/>
+    <text x="42" y="35" text-anchor="middle" font-size="13" font-weight="bold" fill="#5288c1">TF</text>
+    <text x="70" y="27" font-size="14" font-weight="bold" fill="#ffffff">TeleFridge Bot</text>
+    <text x="70" y="44" font-size="11" fill="#cfe0f2">bot</text>
+    <!-- alert bubble -->
+    <rect x="16" y="76" width="330" height="150" rx="14" fill="#ffffff"/>
+    <text x="32" y="100" font-size="11" font-weight="bold" letter-spacing="0.5" fill="#8aa0b6">STICK C</text>
+    <circle cx="37" cy="120" r="6" fill="#e23c3c"/>
+    <text x="50" y="125" font-size="15" font-weight="bold" fill="#8a1414">BOX CRIT HIGH — 8.4 °C</text>
+    <text x="32" y="147" font-size="12.5" font-style="italic" fill="#61738a">limit 8.0 °C · crossed ~10 min ago</text>
+    <text x="32" y="166" font-size="12.5" font-style="italic" fill="#61738a">fridge 11.2 °C — appliance likely failing</text>
+    <!-- battery + time -->
+    <rect x="32" y="185" width="18" height="11" rx="2" fill="none" stroke="#2bb673" stroke-width="1.4"/>
+    <rect x="34" y="187" width="14" height="7" rx="1" fill="#2bb673"/>
+    <rect x="50.5" y="188" width="2.5" height="5" rx="1" fill="#2bb673"/>
+    <text x="60" y="195" font-size="12.5" fill="#3a4a5c">4.10 V / 95 % · 16:05 UTC</text>
+    <text x="330" y="212" text-anchor="end" font-size="10.5" fill="#9fb0c0">16:05</text>
+  </g>
+</svg>
