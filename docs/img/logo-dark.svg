@@ -29,6 +29,9 @@
     <g clip-path="url(#body-d)">
       <rect x="120" y="232" width="228" height="34" fill="url(#zones-d)"/>
     </g>
+    <rect x="190" y="296" width="40" height="16" rx="4" fill="#7cb2e8"/>
+    <rect x="197" y="310" width="26" height="12" fill="#7cb2e8"/>
+    <rect x="178" y="320" width="64" height="72" rx="9" fill="#f0f6fc"/>
     <rect x="306" y="152" width="18" height="56" rx="9" fill="#a8bccd"/>
     <rect x="306" y="292" width="18" height="88" rx="9" fill="#a8bccd"/>
     <g transform="translate(346 30) scale(5.4)">
