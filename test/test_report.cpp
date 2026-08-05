@@ -320,6 +320,57 @@ int main() {
     CHECK(std::string(DEVICE_LABEL) == "Stick C");
   }
 
+  // --- zone_color() vs zone_emoji(): the two renderings must agree (ADR-026) --
+  // The M5StickC TFT can't draw the Telegram glyphs, so it paints zone_color()
+  // instead. These are one decision in two media, and they drifted once already:
+  // the screens kept the pre-issue-#2 traffic-light mapping and painted a sub-2 °C
+  // box red while Telegram had gone 🟦. This suite is what makes the next
+  // divergence fail here rather than on the device.
+  {
+    struct Pair { AlertState s; uint32_t rgb; const char *emoji; };
+    const Pair table[] = {
+      { ALERT_CRIT_LOW,              0x2962FFu, "\xF0\x9F\x9F\xA6" },          // 🟦
+      { ALERT_WARN_LOW,              0x00B0FFu, "\xF0\x9F\x94\xB7" },          // 🔷
+      { ALERT_OK,                    0x00C853u, "\xF0\x9F\x9F\xA2" },          // 🟢
+      { ALERT_WARN_HIGH,             0xFFD600u, "\xF0\x9F\x9F\xA1" },          // 🟡
+      { ALERT_CRIT_HIGH,             0xD50000u, "\xF0\x9F\x94\xB4" },          // 🔴
+      { ALERT_PREDICTED_BREACH_LOW,  0xFF6D00u, "\xE2\x9A\xA0\xEF\xB8\x8F" },  // ⚠️
+      { ALERT_PREDICTED_BREACH_HIGH, 0xFF6D00u, "\xE2\x9A\xA0\xEF\xB8\x8F" },  // ⚠️
+      { ALERT_SENSOR_FAULT,          0xAA00FFu, "\xF0\x9F\x94\xA7" },          // 🔧
+    };
+    constexpr int n = (int) (sizeof(table) / sizeof(table[0]));
+
+    for (int i = 0; i < n; i++) {
+      CHECK(zone_color(table[i].s) == table[i].rgb);
+      // Pins the pairing itself: if zone_emoji() is re-hued without zone_color()
+      // following (or vice versa), this row stops matching the table.
+      CHECK(std::string(zone_emoji(table[i].s)) == table[i].emoji);
+    }
+
+    // Every enumerator is covered — a new AlertState can't slip in unpainted.
+    CHECK(n == (int) ALERT_SENSOR_FAULT + 1);
+
+    // Same glyph ⇒ same colour, and different glyph ⇒ different colour. This is
+    // the invariant that actually matters: whatever the palette becomes, the two
+    // surfaces must partition the zones identically.
+    for (int i = 0; i < n; i++) {
+      for (int j = i + 1; j < n; j++) {
+        const bool same_emoji = std::string(zone_emoji(table[i].s))
+                             == std::string(zone_emoji(table[j].s));
+        const bool same_color = zone_color(table[i].s) == zone_color(table[j].s);
+        CHECK(same_emoji == same_color);
+      }
+    }
+
+    // Cold CRIT is blue on BOTH surfaces — the specific regression issue #2 fixed
+    // in Telegram and ADR-026 had to fix again on the panel. Never red.
+    CHECK(zone_color(ALERT_CRIT_LOW) != zone_color(ALERT_CRIT_HIGH));
+    // Fault is off the thermal scale here too, exactly as 🔧 is off it there.
+    for (int i = 0; i < n; i++)
+      if (table[i].s != ALERT_SENSOR_FAULT)
+        CHECK(zone_color(ALERT_SENSOR_FAULT) != zone_color(table[i].s));
+  }
+
   std::printf("test_report: all %d checks passed\n", g_checks);
   return 0;
 }

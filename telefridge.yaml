@@ -33,14 +33,53 @@ esphome:
     - logger/realert.h
     - logger/commands.h
     - logger/report.h
+  # THE place the TFT rails are turned off (ADR-026). DeepSleepComponent::
+  # begin_sleep() calls App.run_safe_shutdown_hooks() before it sleeps, so this
+  # one hook covers every deep_sleep.enter in the file — the quiet sampling wake,
+  # all four send-script tails, and the manual enter — instead of relying on a
+  # handful of scattered calls to all agree. That matters because axp192_init()
+  # no longer forces the rails off at boot: if a reset ever lands between
+  # axp192_lcd_on() and a screen's own off, nothing else would ever clear them
+  # and the panel would stay lit through deep sleep on a 95 mAh cell.
+  # axp192_lcd_off() is idempotent and safe to call on a wake that never lit it.
+  on_shutdown:
+    - lambda: 'axp192_lcd_off();'
   on_boot:
+    # Power the TFT rails ON *before* the display component's ST7735 init runs
+    # (ADR-026). Display setup happens at ~priority 400, so this must sit above it;
+    # the panel must be powered before its init sequence and must NOT be rail-
+    # bounced between init and the first draw. ONLY a button (ext0) wake lights the
+    # screen — a deliberate press is the one moment a person is looking at the
+    # device. Every other wake falls through here untouched and stays dark: the
+    # 15-min sampling wakes, the 4-h report wake, and cold boot alike. Cold boot
+    # used to draw a 5 s screen too; it was dropped because nobody is necessarily
+    # watching at power-on, and the boot Telegram message already covers it.
+    # axp_pins_config() is idempotent with the one axp192_init() runs at
+    # priority 100.
+    #
+    # g_button_wake is classified HERE, not at priority 100, so that the decision
+    # to light the panel and the decision to draw/extinguish the ack screen read
+    # the same variable. They used to be two independent derivations of one fact
+    # (this lambda tested the wakeup cause; wake_cycle tested g_button_wake) —
+    # and if they ever disagreed the rails would be lit with nothing to turn
+    # them off. esp_sleep_get_wakeup_cause() stays latched until the next sleep
+    # is configured, so reading it this early is safe.
+    - priority: 900
+      then:
+        - lambda: |-
+            axp_pins_config();
+            id(g_button_wake) = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0);
+            if (id(g_button_wake)) axp192_lcd_on();
     - priority: 100
       then:
         # Put the AXP192 into the state this build needs, every wake (ADR-020 /
         # ADR-022): enable its ADCs (otherwise the battery-voltage registers read
-        # zero — ESPHome never calls M5's Axp.begin()), hold the LCD backlight and
-        # panel off (headless, ADR-002), and keep the Grove 5 V boost on for the
-        # ENV II Unit. The PMIC is NOT on an ESPHome i2c bus — the ESP32 has only
+        # zero — ESPHome never calls M5's Axp.begin()) and keep the Grove 5 V boost
+        # on for the ENV II Unit. It no longer forces the LCD backlight and panel
+        # rails off: those are driven by axp192_lcd_on/off() now (ADR-026), and
+        # this runs at priority 100 — long after the panel was lit at 900 and
+        # after the display initialised at 400, so forcing them off here would
+        # blank the screen it is meant to show. The PMIC is NOT on an ESPHome i2c bus — the ESP32 has only
         # two I²C peripherals and both temperature sensors need one each, so
         # axp192.h bit-bangs G21/G22 itself (ADR-023). It therefore configures its
         # own GPIOs and has no component ordering to respect, only the requirement
@@ -75,11 +114,12 @@ esphome:
         - lambda: |-
             id(deep_sleep_1).set_sleep_duration(
               (uint32_t) g_settings.sample_interval_min * 60000UL);
+        # g_button_wake itself was classified at priority 900 (the TFT rails have
+        # to know before the display component initialises); this only logs it.
         - lambda: |-
-            esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-            id(g_button_wake) = (cause == ESP_SLEEP_WAKEUP_EXT0);
             ESP_LOGI("wake", "wakeup_cause=%d first_boot=%d button=%d",
-                     (int) cause, (int) g_first_boot, (int) id(g_button_wake));
+                     (int) esp_sleep_get_wakeup_cause(), (int) g_first_boot,
+                     (int) id(g_button_wake));
         - if:
             condition:
               lambda: 'return g_first_boot;'
@@ -144,6 +184,93 @@ i2c:
     sda: GPIO0
     scl: GPIO26
     scan: true
+
+# --- Onboard TFT: 3 s button status screen (ADR-026) -----------------------
+# Supersedes the "display unused" half of ADR-002, and only just: the 0.96"
+# ST7735S is powered and drawn on a Button A press and NOTHING ELSE. Not the
+# 15-min sampling wakes, not the 4-h report wake, not cold boot. The AXP192
+# LDO2/LDO3 rails are turned back off as soon as the 3 s screen ends, and
+# unconditionally at sleep by the esphome: on_shutdown hook.
+# NOTE the component itself still initialises on EVERY wake, including the ~96
+# daily sampling wakes where the panel is unpowered — an ST7735 init sequence
+# clocked into a dark panel, measured at 901 ms on hardware. That is the real
+# residual cost of this feature and it is NOT zero: the draw is rare, the setup
+# is not. Removing it means dropping the ESPHome display component and driving
+# the panel directly, which is a new ADR, not a tweak (bring-up item 6).
+# StickC display pins are fixed by the board; none collide with the I²C buses
+# (G32/33, G0/26), the bit-banged PMIC (G21/22), or Button A (G37).
+spi:
+  clk_pin: GPIO13
+  mosi_pin: GPIO15
+
+font:
+  - file: "fonts/LiberationSans-Bold.ttf"
+    id: font_big
+    size: 16
+  - file: "fonts/LiberationSans-Regular.ttf"
+    id: font_small
+    size: 11
+
+display:
+  - platform: st7735
+    id: m5_display
+    model: INITR_MINI160X80        # M5StickC 0.96" 80×160 panel
+    cs_pin: GPIO5
+    dc_pin: GPIO23
+    reset_pin: GPIO18
+    rotation: 270                  # → 160×80 landscape (use 90 to flip end-for-end)
+    device_width: 80               # native panel dims, pre-rotation
+    device_height: 160
+    # Panel-to-controller offsets for this 80×160 module, plus the StickC ST7735S's
+    # BGR order + display inversion (the M5StickC-typical values). Tune on hardware:
+    # if the image is shifted, some units want col_start 24 / row_start 0; if colours
+    # look wrong or the background isn't black, flip use_bgr / invert_colors.
+    col_start: 26
+    row_start: 1
+    use_bgr: true
+    invert_colors: true
+    eight_bit_color: false         # 16-bit RGB565 for cleaner verdict colours
+    update_interval: never         # drawn explicitly via component.update on a button wake only
+    lambda: |-
+      // g_screen_draw guards the ONLY draw this build performs. Every other wake
+      // leaves it false and never calls component.update here, so this lambda is
+      // the button path and nothing else. Colour is the verdict signal — the TFT
+      // can't render the Telegram zone_emoji() colour glyphs, so it renders the
+      // same gradient via zone_color() (helpers.h). Do not hand-roll colours
+      // here: the two surfaces must agree about a zone, and drifted last time
+      // they didn't share a table (issue #2).
+      if (!id(g_screen_draw)) return;
+
+      // A button wake sends *something* — normally the on-demand report, but a
+      // CRIT/fault/battery alert outranks it on the same wake. Say "sending",
+      // not "sending report", so the screen can't contradict what goes out.
+      it.print(4, 1, id(font_small), Color(0xFFFFFF), "Sending...");
+
+      // Verdict headline from the BOX sensor (temp_a), fault-aware: a faulted
+      // primary sensor reports FAULT, never a fabricated OK (same rule as the
+      // Telegram builder, ADR-017). Reuses alert_state_live()/zone_color().
+      float ta = id(temp_a).state;
+      float tb = id(temp_b).state;
+      AlertState s = sensor_faulted(true) ? ALERT_SENSOR_FAULT
+                                          : alert_state_live(ta, true);
+      // alert_label() is the Telegram wording; at 16 px bold on a 160 px-wide
+      // panel "BOX SENSOR FAULT" overruns, so the fault line takes a short form.
+      // Every other zone uses the shared label verbatim.
+      const char *vlabel = (s == ALERT_SENSOR_FAULT) ? "FAULT" : alert_label(s);
+      it.printf(4, 16, id(font_big), Color(zone_color(s)), "BOX %s", vlabel);
+
+      // Both temps + battery. NaN degrades to a dash, never a fabricated number.
+      char row[28];
+      if (std::isnan(ta)) snprintf(row, sizeof(row), "Box    --");
+      else                snprintf(row, sizeof(row), "Box    %.1f C", ta);
+      it.print(4, 39, id(font_small), Color(0xFFFFFF), row);
+      if (std::isnan(tb)) snprintf(row, sizeof(row), "Fridge --");
+      else                snprintf(row, sizeof(row), "Fridge %.1f C", tb);
+      it.print(4, 53, id(font_small), Color(0xFFFFFF), row);
+      float bp = id(batt_pct).state;
+      if (std::isnan(bp)) snprintf(row, sizeof(row), "Batt   n/a");
+      else                snprintf(row, sizeof(row), "Batt   %.0f%%", bp);
+      it.print(4, 67, id(font_small), Color(0xFFFFFF), row);
 
 sensor:
   # temp_a — ENV II Unit, SHT30 @0x44 on the Grove bus (ADR-021). This is the
@@ -264,6 +391,15 @@ globals:
     type: bool
     restore_value: no
     initial_value: "false"
+  # RAM-only (ADR-026). True only on the wake that should draw the status screen —
+  # i.e. a Button A press, and nothing else. Every other wake (sampling, 4-h
+  # report, cold boot) leaves it false and never calls component.update on the
+  # display at all, so it is belt-and-braces against a stray draw rather than the
+  # primary gate. Reflects the current wake only — must NOT persist across sleep.
+  - id: g_screen_draw
+    type: bool
+    restore_value: no
+    initial_value: "0"
   # RAM-only per-wake guard (issue #53). Set true the moment wake_cycle hands off
   # to ANY send script (fault / crit / batt / report). It stops wake_cycle from
   # (a) dispatching a second send script this wake and (b) running its own bottom
@@ -357,6 +493,27 @@ script:
                              ? (uint32_t) id(sntp_time).now().timestamp : 0;
           ring_push(epoch, id(temp_a).state, id(temp_b).state);
           g_wake_count++;
+
+      # Button ack screen — THE ONLY SCREEN THIS BUILD DRAWS (ADR-026). On an
+      # on-demand (ext0) wake the TFT rails were powered by the priority-900 on_boot
+      # lambda; draw the verdict + both temps + battery for 3 s, then power the
+      # panel off so the report tail below runs dark. Nothing else reaches this
+      # branch: a timer sampling wake, the 4-h report wake and cold boot all leave
+      # the display untouched and the rails unpowered. The on-demand report still
+      # runs afterwards (the g_button_wake branch further down routes into
+      # send_report_and_sleep) — the screen acknowledges the press, it does not
+      # replace the send.
+      # This off ENDS THE SCREEN mid-wake; it is not the sleep-time guarantee —
+      # that is the on_shutdown hook, which would otherwise leave the panel lit
+      # for the whole multi-second Wi-Fi + send tail.
+      - if:
+          condition:
+            lambda: 'return id(g_button_wake);'
+          then:
+            - lambda: 'id(g_screen_draw) = true;'
+            - component.update: m5_display
+            - delay: 3s
+            - lambda: 'axp192_lcd_off();'
 
       # Per-wake dispatch guard (issue #53): no send script has run yet this wake.
       - lambda: 'id(g_wake_handled) = false;'
@@ -558,6 +715,8 @@ script:
                 condition:
                   lambda: 'return !id(g_wake_handled);'
                 then:
+                  # No axp192_lcd_off() needed here or at any other sleep site —
+                  # the esphome: on_shutdown hook covers every one of them (ADR-026).
                   - deep_sleep.enter: deep_sleep_1
 
   # Scheduled 4-hour report: enable WiFi, send digest, clear buffer, sleep.
@@ -641,6 +800,11 @@ script:
             lambda: 'return !std::isnan(id(temp_a).state);'
           timeout: 1s
       - delay: 20ms
+      # NO screen on this path (ADR-026). Cold boot draws nothing and the TFT rails
+      # are never powered here — the screen is reserved for a deliberate button
+      # press, the one wake where somebody is demonstrably looking at the device.
+      # Power-on already announces itself over Telegram, which reaches you whether
+      # or not you happen to be standing in front of the fridge.
       - deep_sleep.prevent: deep_sleep_1
       - wifi.enable:
       - wait_until:

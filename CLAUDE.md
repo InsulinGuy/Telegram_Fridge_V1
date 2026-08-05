@@ -32,11 +32,13 @@ Readings accumulate in an RTC-memory ring buffer while the device sleeps; it
 lives in deep sleep. Why the roles are asymmetric and locked is in Hardware →
 Sensors.
 
-**This project has no display, no colour, no SD card, no screen inventory, and no
-navigation model.** It is a sibling to **Tadorna** and **Tadorna e-Ink** but a
-separate repo with its own invariants — do **not** port any `display:`, screen,
-refresh, or always-on concept from them. It is also not real-time (readings are
-batched every 4 h) and not mains-powered (optimised for lowest average current).
+**This project has no always-on display, no SD card, no screen inventory, and no
+navigation model** — the onboard TFT lights only for a 3 s status screen on a
+Button A press, and is dark on every other wake (ADR-026). It is a sibling to **Tadorna** and **Tadorna
+e-Ink** but a separate repo with its own invariants — do **not** port any
+always-on `display:`, screen-inventory, or refresh-loop concept from them. It is
+also not real-time (readings are batched every 4 h) and not mains-powered
+(optimised for lowest average current).
 
 **ESPHome:** 2026.4.5 · **Device name:** telefridge · **Repo:**
 telefridge_StickC_V1 (split from `telefridge_V1` on 2026-08-04, ADR-025).
@@ -49,8 +51,8 @@ telefridge_StickC_V1 (split from `telefridge_V1` on 2026-08-04, ADR-025).
 
 - MCU: ESP32-PICO-D4 (dual-core Xtensa LX6), 4 MB flash, **no PSRAM** — declaring
   a `psram:` block boot-loops the device.
-- USB-C; onboard 0.96" TFT (**unused**, ADR-002; its rails held off via the
-  AXP192 to save power).
+- USB-C; onboard 0.96" ST7735S TFT (**a 3 s screen on a Button A press only**,
+  ADR-026; its AXP192 rails are held off at every other moment to save power).
 - **AXP192 PMIC** (0x34) — LiPo charger, rail control, and the **only** source of
   battery telemetry: no ADC divider, no fuel gauge.
 - Onboard **~95 mAh** Li-ion cell, the sole supply (ADR-022).
@@ -159,9 +161,9 @@ would look like a flat cell and trip the protective floor.
 | Signal        | GPIO | Notes                                                     |
 |---------------|------|-----------------------------------------------------------|
 | Red LED       | 10   | Active LOW. Keep dark in normal operation (power).        |
-| Button A      | 37   | ext0 deep-sleep wake source (on-demand report).           |
+| Button A      | 37   | ext0 deep-sleep wake source (on-demand report + 3 s screen). |
 | Button B      | 39   | Unused.                                                   |
-| TFT           | —    | **Unused (ADR-002).** LDO2/LDO3 held off by `axp192_init()`. |
+| TFT           | SPI: CLK 13, MOSI 15; CS 5, DC 23, RST 18 | **3 s Button A status screen ONLY (ADR-026, supersedes the display half of ADR-002).** ST7735S, LDO2/LDO3 driven by `axp192_lcd_on/off()`; dark on sampling wakes, report wakes and cold boot alike. |
 | RESET         | —    | Hardware reset button (not a GPIO).                       |
 
 Button A (GPIO37) is the **ext0 deep-sleep wake source** ("wake, connect, send
@@ -190,8 +192,10 @@ continuous quiescent draw. So runtime is dominated by **PMIC idle current, not t
 wake cadence** — lengthening `SAMPLE_INTERVAL` buys little, which is why the
 15 min / 4 h cadence is kept unchanged. **Days, not months, is an accepted trade.**
 Measure the real average current on hardware and record it in ADR-022. The power
-levers that remain: `axp192_init()` holding LDO2/LDO3 off, and ADR-006's radio
-policy (there is no switched-rail lever on this board).
+levers that remain: keeping the TFT rails (LDO2/LDO3) off outside the brief
+3 s button screen (enforced by an `on_shutdown` hook, so it holds at every sleep
+site — ADR-026), and ADR-006's radio policy (there is no switched-rail lever on
+this board).
 
 ### Battery monitoring & protection — firmware
 
@@ -486,8 +490,12 @@ device if changed):
   `component.update:` each wake, targeting the **hub id** (`sht30_hub`/`dht12_hub`),
   not the sub-sensor. `batt_pct` updates *after* `batt_v`.
 - **`wifi: enable_on_boot: false`** (see Wi-Fi policy).
-- `on_boot` runs `axp192_init();` once per wake (enable ADCs, LCD rails off, Grove
-  5 V on — no bus argument, the PMIC is bit-banged).
+- `on_boot` runs `axp192_init();` once per wake (enable ADCs, Grove 5 V on, TFT
+  rails left as found — no bus argument, the PMIC is bit-banged). A higher-priority
+  (900) `on_boot` lambda classifies `g_button_wake` and runs `axp192_lcd_on()` on
+  button (ext0) wakes only, above the display component's ST7735 init (ADR-026);
+  `axp192_lcd_off()` runs from an **`on_shutdown` hook**, which ESPHome fires at
+  every `deep_sleep.enter`.
 - `deep_sleep: sleep_duration: 15min` (== `SAMPLE_INTERVAL`), wake also on GPIO37
   (Button A) via ext0.
 
@@ -546,11 +554,12 @@ telefridge_StickC_V1/
 ├── .github/workflows/        ← release CI
 ├── certs/
 │   └── telegram_root_ca.pem  ← pinned GoDaddy Root CA G2 for api.telegram.org (public)
+├── fonts/                    ← OFL Liberation Sans TTFs for the button TFT screen (ADR-026)
 ├── docs/
 │   ├── settings-inventory.md    ← runtime-settings inventory + guardrails (the logger/settings.h contract)
 │   └── telegram-message-ia.md   ← Telegram message info-architecture + HTML spec (ADR-017)
 ├── logger/                   ← C++ headers, pulled in via esphome: includes:
-│   ├── helpers.h             ← alert enum (8 states), per-sensor thresholds + predictor constants, alert_state(), zone_emoji/html_escape
+│   ├── helpers.h             ← alert enum (8 states), per-sensor thresholds + predictor constants, alert_state(), zone_emoji + zone_color (TFT, ADR-026)/html_escape
 │   ├── axp192.h              ← bit-banged software I²C on G21/G22 + axp192_init() + axp192_batt_voltage() (ADR-023)
 │   ├── ring_buffer.h         ← RTC_DATA_ATTR sample ring + wake_count + predictor/realert RTC state + latch-arm helpers
 │   ├── predictor.h           ← ema(), t_to_threshold(), predictor firing rule (ADR-013)
@@ -623,9 +632,13 @@ telefridge_StickC_V1/
 esp-idf, not Arduino: needed for reliable deep-sleep control, RTC-memory handling,
 and parity with the sibling builds.
 
-### ADR-002 — Headless: no display, no SD — *in force*
-No display and no SD card. State is an RTC-memory digest reported over Telegram;
-no local UI or file log. (Canonical home for the "no display" invariant.)
+### ADR-002 — Headless: no display, no SD — *in force, display half amended by ADR-026*
+No SD card, and no *operational* UI: state is an RTC-memory digest reported over
+Telegram, with no local file log and no always-on screen. The blanket "display
+unused" invariant is **narrowed by ADR-026** — the onboard TFT now shows a brief
+status screen on a button press (3 s), but stays dark on every unattended wake —
+sampling, report and cold boot — and in deep sleep, so the
+headless-in-normal-operation and power premises hold.
 
 ### ADR-003 — Sensors SHT40 + STTS22H (STEMMA QT) — *superseded by ADR-021.* See git history.
 
@@ -810,6 +823,63 @@ tracker, not this repo (treat them as citations into that history); and the
 insulin-class refrigerated storage. Secrets were verified never committed in the
 source history.
 
+### ADR-026 — Onboard TFT: a 3 s status screen on a button press, and nothing else — *in force, narrows the display half of ADR-002*
+The M5StickC's 0.96" ST7735S TFT, previously held dark, now shows a **3 s status
+screen on a Button A press** (the button still fires its on-demand Telegram
+report; the screen is visual confirmation the press registered). Content is
+**verdict-led** — the box-safety verdict from `temp_a` (`alert_state_live` →
+`alert_label`, fault-aware per ADR-017: a faulted primary sensor shows **FAULT**,
+never a fabricated OK), then both temps and battery.
+
+**A deliberate press is the whole trigger condition, and that is the decision.**
+An earlier revision also drew a 5 s screen on cold boot; it was dropped. The
+screen's only value is that a person is standing in front of the device *right
+now* — which a button press proves and no other wake does. Power-on, the 15-min
+sampling wakes and the 4-h report wake are all unattended by definition, so a
+screen there is light nobody sees, spent from a 95 mAh cell. Cold boot already
+announces itself over Telegram, which reaches the owner wherever they are. **Do
+not re-add a screen to any unattended wake** without a new ADR arguing why
+someone would be watching.
+
+**The panel can't render the Telegram `zone_emoji()` glyphs, so colour carries the
+zone instead — via `zone_color()`, which lives beside `zone_emoji()` in
+`helpers.h` and returns a packed `0xRRGGBB`.** Two renderings of one decision, in
+one place, because they demonstrably drift when kept apart: the screens were first
+written against the pre-issue-#2 collapsed traffic-light scale and went on painting
+a sub-2 °C box red after the Telegram side had gone directional. `zone_color()`
+returns a plain integer rather than ESPHome's `Color` so `helpers.h` stays free of
+framework types and host-testable; `test_report.cpp` asserts the two tables agree
+zone-for-zone, so the next divergence fails a test rather than shipping.
+
+**Why this doesn't break ADR-002's premises:** the panel is powered (AXP192
+LDO2/LDO3) *only* on a button wake and turned back off as soon as the 3 s screen
+ends, so **every unattended wake and all of deep sleep stay dark**. The residual
+cost is not zero and should not be described as such: the display *component*
+still initialises on every wake, **measured at 901 ms on hardware**, ~96 times a
+day, against a panel that is unpowered. Removing that means dropping the ESPHome
+`display:` component and driving the ST7735 directly — a new ADR, not a tweak.
+
+**Power-model inversion (the load-bearing change):** "display off" is no longer
+enforced at boot by `axp192_init()` (it now leaves the TFT rails as found and only
+forces EXTEN). Instead `axp192_lcd_on()` lights the rails from a **priority-900
+`on_boot` lambda** — above the display component's priority-400 ST7735 init, so
+the panel is powered before init and never rail-bounced between init and the first
+draw — and `axp192_lcd_off()` is enforced from an **`esphome: on_shutdown` hook**,
+which `DeepSleepComponent::begin_sleep()` fires (via `App.run_safe_shutdown_hooks()`)
+at every one of the six `deep_sleep.enter` sites. **That single choke point is
+safety-relevant, not tidiness:** since `axp192_init()` no longer clears the rails,
+a reset landing between `axp192_lcd_on()` and a screen's own off would otherwise
+leave the panel lit through deep sleep on a 95 mAh cell, with nothing to clear it.
+For the same reason the wake is classified **once** — `g_button_wake` is set in the
+priority-900 lambda and read by both the rail-on decision and the ack screen,
+rather than each deriving the wake cause independently.
+
+Rail arithmetic (`axp192_lcd_on_target`/`axp192_lcd_off_target`) is host-tested in
+`test/test_axp192.cpp`; the ST7735/SPI/font wiring is ESPHome-only and **still
+needs on-hardware verification** (panel offsets, colour order, and the dark-on-
+sampling-wake invariant — see Open items). New assets: `spi:`/`display:`/`font:` in
+`telefridge.yaml` and an OFL font under `fonts/`.
+
 ---
 
 ## Open items to finalise on the physical build
@@ -823,8 +893,54 @@ ADR-016) — the last validated on hardware 2026-07-27. **Design only:** the
 it ships a placeholder `TAU_BOX_MIN` (`helpers.h`) and box-thermal calibration was
 not pursued for V1; treat its ETAs as advisory until τ is fitted (ADR-013).
 
-No physical-build items remain open — the lists below are the record of what was
-validated on hardware and what was decided out-of-scope.
+The original bring-up list is fully closed (below). **ADR-026 opens a second
+list:** the TFT screen is host-tested, compiles clean, and has now been **flashed
+and partly validated on hardware (2026-08-05)** — see *TFT bring-up* immediately
+below. Everything else in the lists is the record of what was validated and what
+was decided out-of-scope.
+
+### TFT bring-up — PARTLY VALIDATED (ADR-026)
+
+Flash over **USB, not OTA** (a 6 s button wake can't carry a ~1 MB image). Item 3
+is the load-bearing one: it is the invariant the whole power argument rests on.
+
+- [x] **1. Screen renders correctly (2026-08-05)** — right orientation, image not
+      shifted, black background, nothing clipped. `col_start: 26` / `row_start: 1`
+      were an educated guess and are **correct on this unit**; the `24`/`0`
+      alternative and the `use_bgr`/`invert_colors` knobs were not needed.
+- [x] **2. Button A → 3 s screen → panel dark → the send still happens
+      (2026-08-05)** — confirmed four times, twice before the button-only change
+      and twice after. Log shows `wakeup_cause=2 button=1`, a 3.05–3.24 s gap
+      between the sensor read and `wifi.enable` (the screen holding), then a
+      delivered Telegram report and a clean sleep.
+- [ ] **3. An unattended wake NEVER lights the panel.** The 15-min sampling wake
+      is the case to watch (`/set sample_interval_min 1` compresses it); the 4-h
+      report wake and cold boot take the same path. Cold boot is now easy to check
+      directly — power-cycle and confirm the panel stays black.
+- [x] **4. Recovers from an interrupted screen (2026-08-05)** — RESET pressed
+      during the live 3 s screen; the panel ended up dark. This is the failure the
+      `on_shutdown` hook exists for, and the one that would otherwise flatten the
+      cell: the AXP192 is a separate chip, so an ESP32 reset leaves LDO2/LDO3
+      exactly as the interrupted screen left them — ON — and `axp192_init()` no
+      longer clears them. Nothing recovers it until the post-reset wake reaches a
+      `deep_sleep.enter` and the hook fires. **Expect the backlight to stay lit for
+      the whole post-reset wake (~40 s if it sends), then go out** — the display
+      component's own reset blanks the *image* at ~priority 400 but does not remove
+      rail power, so an immediately-black panel is the image clearing, not the
+      rails dropping. Worth re-checking with that distinction in mind if the power
+      budget ever looks wrong.
+- [ ] **5. Screen and Telegram agree on a real zone** — chill the box below 2 °C:
+      the panel must show **blue** `BOX TOO COLD` while the message shows 🟦. The
+      host test pins the tables to each other; only hardware pins them to reality.
+- [ ] **6. Average-current comparison, before vs after.** Partly answered: the
+      display component's setup is **901 ms on every wake** (measured 2026-08-05),
+      against an unpowered panel, ~96 times a day. That is the real residual cost
+      and it is not zero. What is still missing is what it costs in mA·h — measure
+      and fold into ADR-022, then decide whether it justifies dropping the ESPHome
+      `display:` component for direct ST7735 control.
+- [ ] **7. `AXP192_LDO23_3V0` (reg 0x28 = `0xCC`, 3.0 V both rails)** is the one
+      unvalidated register write in the change — confirm the panel is legible and
+      the backlight isn't over-driven.
 
 ### M5StickC bring-up
 

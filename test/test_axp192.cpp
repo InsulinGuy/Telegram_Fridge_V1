@@ -210,14 +210,25 @@ static void reset_bus(bool present = true) {
 
 int main() {
   // --- Pure helpers, independent of the wire ------------------------------
-  // Rail arithmetic: EXTEN forced on, LDO2/LDO3 cleared, everything else — and
-  // DC-DC1 (bit0, our own 3.3 V supply) above all — preserved untouched.
-  CHECK(axp192_rails_target(0x4D) == 0x41);   // 0100_1101 -> 0100_0001
+  // Init rail arithmetic (ADR-026): EXTEN forced on; LDO2/LDO3 now left AS FOUND
+  // (driven separately by the lcd helpers), everything else — and DC-DC1 (bit0,
+  // our own 3.3 V supply) above all — preserved untouched.
+  CHECK(axp192_rails_target(0x41) == 0x41);   // EXTEN already on: no change
+  CHECK(axp192_rails_target(0x01) == 0x41);   // EXTEN set; DC-DC1 preserved
   CHECK(axp192_rails_target(0x00) == 0x40);   // EXTEN set even from all-off
-  CHECK(axp192_rails_target(0xFF) == 0xF3);   // only the two LCD bits cleared
+  CHECK(axp192_rails_target(0x4C) == 0x4C);   // LDO2/LDO3 left exactly as found
   CHECK((axp192_rails_target(0x03) & 0x01) == 0x01);  // DC-DC1 never disturbed
-  CHECK((axp192_rails_target(0xFF) & AXP192_LCD_RAILS) == 0);
   CHECK((axp192_rails_target(0x00) & AXP192_EXTEN) == AXP192_EXTEN);
+
+  // TFT-rail arithmetic for the boot/button screens (ADR-026): only LDO2|LDO3
+  // move, EXTEN and DC-DC1 and everything else stay exactly as found.
+  CHECK(axp192_lcd_on_target(0x41) == 0x4D);          // 0x41 | 0x0C
+  CHECK(axp192_lcd_on_target(0x4D) == 0x4D);          // already on: no change
+  CHECK((axp192_lcd_on_target(0x41) & 0x41) == 0x41); // EXTEN + DC-DC1 preserved
+  CHECK(axp192_lcd_off_target(0x4D) == 0x41);         // 0x4D & ~0x0C
+  CHECK(axp192_lcd_off_target(0x41) == 0x41);         // already off: no change
+  CHECK((axp192_lcd_off_target(0xFF) & AXP192_LCD_RAILS) == 0);
+  CHECK((axp192_lcd_off_target(0xFF) & 0x01) == 0x01); // DC-DC1 never disturbed
 
   // 12-bit pair -> volts at 1.1 mV/LSB; the low register's high nibble is
   // status, not data, and must be masked off.
@@ -241,22 +252,51 @@ int main() {
   CHECK(v == 0x4D);
   CHECK(g_bus.mode == FakeAxp::IDLE);
 
-  // --- init(): ADCs enabled, LCD rails off, EXTEN on, DC-DC1 preserved ----
+  // --- init(): ADCs enabled, EXTEN on, LCD rails + DC-DC1 preserved -------
+  // ADR-026: init no longer forces the TFT rails off — it forces EXTEN on and
+  // leaves LDO2/LDO3 exactly as found (the lcd helpers own them).
   reset_bus();
-  g_bus.regs[0x12] = 0x4D;   // LDO2+LDO3 on (LCD alive), DC-DC1 on, EXTEN off
+  g_bus.regs[0x12] = 0x01;   // DC-DC1 on, EXTEN off, LCD rails off (post-sleep)
   g_bus.regs[0x82] = 0x00;   // ADCs disabled, as at power-on
   axp192_init();
   CHECK(g_bus.regs[0x82] == 0xFF);   // without this, 0x78/0x79 read zero forever
   CHECK(g_bus.regs[0x12] == 0x41);
   CHECK((g_bus.regs[0x12] & 0x01) == 0x01);              // ESP32's own rail alive
-  CHECK((g_bus.regs[0x12] & AXP192_LCD_RAILS) == 0);     // headless (ADR-002)
   CHECK((g_bus.regs[0x12] & AXP192_EXTEN) != 0);         // Grove 5 V for temp_a
 
+  // init() must not clear TFT rails that a boot/button wake has already turned
+  // on (ADR-026): with LDO2/LDO3 set it leaves them, only forcing EXTEN.
+  reset_bus();
+  g_bus.regs[0x12] = 0x4D;   // LDO2+LDO3 on (screen lit), DC-DC1 on, EXTEN on
+  axp192_init();
+  CHECK(g_bus.regs[0x12] == 0x4D);                       // rails untouched
+  CHECK((g_bus.regs[0x12] & AXP192_LCD_RAILS) == AXP192_LCD_RAILS);
+
   // init() is called on EVERY wake — it must be idempotent, and must not write
-  // 0x12 again once the rails already read correct.
+  // 0x12 again once EXTEN already reads correct.
   const uint8_t after_first = g_bus.regs[0x12];
   axp192_init();
   CHECK(g_bus.regs[0x12] == after_first);
+
+  // --- lcd_on()/lcd_off() drive only the TFT rails, over the wire ---------
+  // lcd_on(): sets the LDO voltage (0x28) and turns LDO2/LDO3 on, EXTEN + DC-DC1
+  // preserved. lcd_off(): clears them again — the sleep-time "display off".
+  reset_bus();
+  g_bus.regs[0x12] = 0x41;   // EXTEN + DC-DC1 on, screen off (a sampling wake)
+  axp192_lcd_on();
+  CHECK(g_bus.regs[0x28] == AXP192_LDO23_3V0);           // LDO voltage programmed
+  CHECK(g_bus.regs[0x12] == 0x4D);                       // TFT rails now on
+  CHECK((g_bus.regs[0x12] & 0x41) == 0x41);              // EXTEN + DC-DC1 kept
+  axp192_lcd_off();
+  CHECK(g_bus.regs[0x12] == 0x41);                       // back to dark
+  CHECK((g_bus.regs[0x12] & 0x41) == 0x41);              // EXTEN + DC-DC1 kept
+
+  // A corrupted 0x12 read (DC-DC1 low) must NOT be acted on by the lcd helpers
+  // either — same DC-DC1 safety guard as init().
+  reset_bus();
+  g_bus.regs[0x12] = 0x0C;   // implausible: LCD bits set but our own rail reads low
+  axp192_lcd_off();
+  CHECK(g_bus.regs[0x12] == 0x0C);   // left untouched rather than written back
 
   // --- A corrupted 0x12 read must NOT be acted on -------------------------
   // 0x12 is the only register we read-modify-write, and bit0 is DC-DC1 — the
@@ -275,11 +315,12 @@ int main() {
   CHECK(g_bus.regs[0x12] == 0x4C);   // left untouched rather than written back
   CHECK(g_bus.regs[0x82] == 0xFF);   // the ADC enable still happens (write-only)
 
-  // And the safe path is unaffected: a plausible read is still acted on.
+  // And the safe path is unaffected: a plausible read is still acted on —
+  // EXTEN forced on, TFT rails left as found (ADR-026).
   reset_bus();
-  g_bus.regs[0x12] = 0x4D;
+  g_bus.regs[0x12] = 0x01;   // plausible (DC-DC1 on), EXTEN off
   axp192_init();
-  CHECK(g_bus.regs[0x12] == 0x41);
+  CHECK(g_bus.regs[0x12] == 0x41);   // EXTEN forced on
 
   // --- Battery voltage over the wire --------------------------------------
   reset_bus();

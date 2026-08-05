@@ -32,6 +32,8 @@
 //           bit6 EXTEN   bit4 DC-DC2  bit3 LDO3  bit2 LDO2  bit1 DC-DC3  bit0 DC-DC1
 //         On the StickC: LDO2 = LCD backlight, LDO3 = LCD panel, DC-DC1 = the
 //         ESP32's own 3.3 V rail, EXTEN = the 5 V boost feeding the Grove port.
+//   0x28  LDO2/LDO3 output voltage. High nibble = LDO2 (LCD backlight), low
+//         nibble = LDO3 (LCD panel); volts = 1.8 + 0.1 * nibble.
 //   0x78  Battery voltage ADC, high 8 bits
 //   0x79  Battery voltage ADC, low 4 bits (in bits 3:0) — 12-bit total, 1.1 mV/LSB
 //   0x82  ADC enable 1. 0xFF = enable all (incl. the battery-voltage ADC we need).
@@ -41,17 +43,27 @@
 constexpr uint8_t AXP192_ADDR = 0x34;
 
 constexpr uint8_t AXP192_REG_DCDC_LDO_EN = 0x12;
+constexpr uint8_t AXP192_REG_LDO23_V = 0x28;
 constexpr uint8_t AXP192_REG_BATT_V_HI = 0x78;
 constexpr uint8_t AXP192_REG_BATT_V_LO = 0x79;
 constexpr uint8_t AXP192_REG_ADC_EN1 = 0x82;
 
-// 0x12 bit masks we touch. LDO2|LDO3 are cleared (headless, ADR-002); EXTEN is
-// forced ON because it gates the 5 V boost that powers the Grove port, and the
-// ENV II Unit carrying temp_a hangs off that port. Every other bit — critically
-// DC-DC1, the ESP32's own supply — is left exactly as found.
+// 0x12 bit masks we touch. EXTEN is forced ON because it gates the 5 V boost that
+// powers the Grove port, and the ENV II Unit carrying temp_a hangs off that port.
+// LDO2|LDO3 are the TFT rails: no longer forced off at boot (ADR-026 supersedes
+// the display half of ADR-002) — axp192_init() leaves them as found, and
+// axp192_lcd_on()/axp192_lcd_off() drive them for the brief boot/button status
+// screens. "Display off" is now enforced at sleep via axp192_lcd_off(), so all
+// sampling wakes stay dark. Every other bit — critically DC-DC1, the ESP32's own
+// supply — is left exactly as found.
 constexpr uint8_t AXP192_LCD_RAILS = 0x0C;  // LDO3 | LDO2
 constexpr uint8_t AXP192_EXTEN = 0x40;
 constexpr uint8_t AXP192_DCDC1 = 0x01;      // the ESP32's own 3.3 V rail
+
+// LDO2 (backlight) + LDO3 (panel) both to 3.0 V: each nibble 0xC → 1.8 + 0.1*12.
+// Confirm/tune on hardware (M5's own begin() writes this register). Set once by
+// axp192_lcd_on() before the rails are enabled.
+constexpr uint8_t AXP192_LDO23_3V0 = 0xCC;
 
 // The StickC's internal PMIC bus. Fixed by the board — these are not a choice.
 constexpr int AXP192_PIN_SDA = 21;
@@ -233,12 +245,23 @@ static inline bool axp192_read_reg(uint8_t reg, uint8_t *out) {
   return ok;
 }
 
-// Pure: what register 0x12 should become, given what it currently reads.
-// Backlight + panel off (ADR-002), Grove 5 V boost on (temp_a hangs off it),
-// every other bit — critically DC-DC1, our own supply — left exactly as found.
-// Split out from axp192_init() so the rail arithmetic is host-testable.
+// Pure: what register 0x12 should become at init, given what it currently reads.
+// Grove 5 V boost on (temp_a hangs off it); the TFT rails (LDO2/LDO3) are left
+// exactly as found (ADR-026 — driven separately by axp192_lcd_on/off()), as is
+// every other bit — critically DC-DC1, our own supply. Split out from
+// axp192_init() so the rail arithmetic is host-testable.
 static inline uint8_t axp192_rails_target(uint8_t current) {
-  return (uint8_t) ((current | AXP192_EXTEN) & (uint8_t) ~AXP192_LCD_RAILS);
+  return (uint8_t) (current | AXP192_EXTEN);
+}
+
+// Pure: register 0x12 with the TFT rails (LDO2|LDO3) ON, everything else as found.
+static inline uint8_t axp192_lcd_on_target(uint8_t current) {
+  return (uint8_t) (current | AXP192_LCD_RAILS);
+}
+
+// Pure: register 0x12 with the TFT rails (LDO2|LDO3) OFF, everything else as found.
+static inline uint8_t axp192_lcd_off_target(uint8_t current) {
+  return (uint8_t) (current & (uint8_t) ~AXP192_LCD_RAILS);
 }
 
 // Is a value read from 0x12 believable? Register 0x12 is the one register we
@@ -278,6 +301,35 @@ static inline void axp192_init() {
   uint8_t rails = 0;
   if (axp192_read_reg(AXP192_REG_DCDC_LDO_EN, &rails) && axp192_rails_plausible(rails)) {
     const uint8_t want = axp192_rails_target(rails);
+    if (want != rails)
+      axp192_write_reg(AXP192_REG_DCDC_LDO_EN, want);
+  }
+}
+
+// Power the TFT rails ON (LDO2 backlight + LDO3 panel) for the brief boot/button
+// status screens (ADR-026). Sets the LDO voltage first (harmless if already set),
+// then the enable bits — guarded by axp192_rails_plausible() so a corrupted 0x12
+// read never RMWs DC-DC1 (our own supply) to zero. Callers must have run
+// axp_pins_config() first (the high-priority on_boot lambda does, before the
+// ESPHome display component's ST7735 init runs).
+static inline void axp192_lcd_on() {
+  axp192_write_reg(AXP192_REG_LDO23_V, AXP192_LDO23_3V0);
+  uint8_t rails = 0;
+  if (axp192_read_reg(AXP192_REG_DCDC_LDO_EN, &rails) && axp192_rails_plausible(rails)) {
+    const uint8_t want = axp192_lcd_on_target(rails);
+    if (want != rails)
+      axp192_write_reg(AXP192_REG_DCDC_LDO_EN, want);
+  }
+}
+
+// Power the TFT rails OFF. This is where "display off" is now enforced (ADR-026
+// supersedes the display half of ADR-002): call before every deep_sleep.enter so
+// the panel is dark in sleep and on all sampling wakes. Idempotent; guarded like
+// axp192_lcd_on().
+static inline void axp192_lcd_off() {
+  uint8_t rails = 0;
+  if (axp192_read_reg(AXP192_REG_DCDC_LDO_EN, &rails) && axp192_rails_plausible(rails)) {
+    const uint8_t want = axp192_lcd_off_target(rails);
     if (want != rails)
       axp192_write_reg(AXP192_REG_DCDC_LDO_EN, want);
   }

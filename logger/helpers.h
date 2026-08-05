@@ -208,6 +208,35 @@ inline const char *zone_emoji(AlertState s) {
   return "\xF0\x9F\x9F\xA1";                                              // 🟡 (unknown)
 }
 
+// The same zone gradient as zone_emoji(), for a surface that cannot render
+// emoji: the M5StickC TFT status screens (ADR-026). Returns a packed 0xRRGGBB —
+// a plain integer rather than ESPHome's Color, so this header stays host-
+// testable and free of framework types; the display lambda wraps it in Color().
+//
+// It lives beside zone_emoji() ON PURPOSE. The two are the same decision
+// rendered in two media, and when they lived apart they drifted: the screens
+// were written against the old collapsed traffic-light scale and kept painting
+// a sub-2 °C box red after the Telegram side had gone directional (issue #2).
+// Add a zone here whenever you add one there, and keep the pairs aligned:
+//   🟦 blue · 🔷 cyan · 🟢 green · 🟡 amber · 🔴 red · ⚠️ orange · 🔧 violet
+// The two off-scale states carry the same reasoning as their glyphs. Predicted
+// breach is orange, not amber — it must not read as "WARN, but on a screen".
+// Sensor fault is violet: it is the absence of a reading, not a point on the
+// thermal scale, and must be unmistakable against every hue on it.
+inline uint32_t zone_color(AlertState s) {
+  switch (s) {
+    case ALERT_CRIT_LOW:               return 0x2962FFu;  // blue    ↔ 🟦
+    case ALERT_WARN_LOW:               return 0x00B0FFu;  // cyan    ↔ 🔷
+    case ALERT_OK:                     return 0x00C853u;  // green   ↔ 🟢
+    case ALERT_WARN_HIGH:              return 0xFFD600u;  // amber   ↔ 🟡
+    case ALERT_CRIT_HIGH:              return 0xD50000u;  // red     ↔ 🔴
+    case ALERT_PREDICTED_BREACH_LOW:
+    case ALERT_PREDICTED_BREACH_HIGH:  return 0xFF6D00u;  // orange  ↔ ⚠️
+    case ALERT_SENSOR_FAULT:           return 0xAA00FFu;  // violet  ↔ 🔧
+  }
+  return 0xFFD600u;                                       // amber (unknown)
+}
+
 // Escape a string for Telegram parse_mode=HTML (issue #63). Only these three
 // characters are special in Telegram's HTML subset; escaping them lets arbitrary
 // dynamic text sit safely between tags without producing a malformed document
