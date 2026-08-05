@@ -58,7 +58,23 @@ Two things to know when reading it:
 - GPIO references use the `GPIONN` form, never bare integers.
 - Secrets live only in `secrets.yaml` (git-ignored). Never commit real
   credentials, your SSID, your bot token, or a chat ID — check your diff.
+- **Never raise `logger: level:` in a committed config.** ESPHome logs the SSID
+  at `INFO` and the Wi-Fi password at `VERBOSE`, so a level bump ships a
+  credential leak to everyone who flashes it. `INFO` is the shipped default;
+  bump it locally and revert before you push.
 - New files get the SPDX header the existing files carry.
+
+## Two things about this repo
+
+- **Redact logs before pasting them anywhere.** Your bot token is inside the URL
+  ESPHome prints on a failed send, and it is logged at ERROR so no log level
+  hides it. [`SECURITY.md`](./SECURITY.md) has the details and the rotation
+  steps — read it before you open an issue with a log attached.
+- **`.claude/settings.json` is committed and contains an auto-running hook.** If
+  you open this repo in Claude Code, a `PreToolUse` hook runs
+  `scripts/stamp_version.py` before any `esphome run`/`compile` to stamp
+  `FW_VERSION` into `logger/build_number.h`. It is short and worth reading
+  before you let it run.
 
 ## Licensing
 

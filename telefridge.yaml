@@ -151,7 +151,18 @@ esp32:
 # PICO-MINI-02); declaring it here boot-loops the device. See ADR-020.
 
 logger:
-  level: DEBUG   # TEMP: bumped from INFO for VUSB/OTA debug session — revert after
+  # INFO is the shipped default. Do NOT leave DEBUG/VERBOSE in a committed
+  # config: ESPHome logs the SSID at INFO and the Wi-Fi password at VERBOSE
+  # (wifi_component.cpp — note LOG_SECRET() does NOT redact, it only wraps the
+  # value in ANSI blink codes), so a raised level puts a user's home-network
+  # credentials into any log they paste into an issue.
+  #
+  # This does NOT contain the bot-token leak: on any failed or non-2xx request
+  # ESPHome logs the full URL at ERROR level, which no log level suppresses —
+  # `HTTP Request failed; URL: https://api.telegram.org/bot<TOKEN>/sendMessage`.
+  # Redact that before sharing a log, and rotate via @BotFather /revoke if it
+  # ever got out. See SECURITY.md.
+  level: INFO
 
 ota:
   - platform: esphome
@@ -460,11 +471,11 @@ deep_sleep:
   wakeup_pin:
     # Button A on the M5StickC front face (ADR-020). Input-only RTC GPIO, so it
     # is valid as an ext0 source. Buttons pull to GND, hence inverted.
-    # TODO VERIFY on hardware: confirm G37 is pulled up and does NOT float. A
-    # floating ext0 pin is the issue #39 failure — the Feather self-woke every
-    # 30-50 s instead of holding its sleep interval, which quietly destroys the
-    # power budget. Confirm the sleep interval holds before trusting any runtime
-    # measurement on this board.
+    # VERIFIED on hardware 2026-08-04 (bring-up #2): G37 is pulled up and does
+    # not float — the 15-min sleep holds untouched. A floating ext0 pin was the
+    # issue #39 failure on the retired Feather, which self-woke every 30-50 s
+    # instead of holding its interval and quietly destroyed the power budget.
+    # That hazard does not apply on this board.
     number: GPIO37
     inverted: true
 

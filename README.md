@@ -132,7 +132,14 @@ wrong. *(Illustrative mockups — real photos coming soon.)*
 **On the device itself:** the screen stays off to save battery. Press the button
 and it wakes for 3 seconds, showing the verdict (colour-coded the same way as the
 messages), both temperatures and the battery — then goes dark again and sends you
-a report. Nothing else ever turns the screen on.
+a report. A button press is designed to be the *only* thing that lights it: the
+routine 15-minute and 4-hour wake-ups are meant to stay dark.
+
+> 🔬 The "dark on every routine wake" behaviour is confirmed by design and by the
+> project's own tests, but **has not yet been signed off on real hardware over a
+> full day** (see the TFT bring-up checklist in [`CLAUDE.md`](./CLAUDE.md)). If
+> you find the screen lighting up on its own, that's a bug worth reporting — and
+> it will cost you battery life.
 
 ## What you need
 
@@ -161,11 +168,21 @@ a report. Nothing else ever turns the screen on.
    - `wifi_ssid_2` — a second network to fall back to. If you only have one, just
      put the same name as `wifi_ssid` here. (Both networks use `wifi_password`.)
    - `telegram_bot_token` and `telegram_chat_id` — from step 2.
-   - `ota_password` — any random string, used to protect wireless updates. Make one
-     with `openssl rand -hex 16`.
+   - `ota_password` — protects wireless updates. **Generate a strong random one**
+     with `openssl rand -hex 16` — don't pick something memorable. Holding the
+     reset button through ~10 restarts puts the device into safe mode, where it
+     stays awake with Wi-Fi on and listens for an update; this password is the
+     only thing guarding that.
 
    This file stays on your computer and is never shared — it is already listed in
    `.gitignore`.
+
+   > 🔐 **Keep your bot token to yourself.** It is the key to your bot: anyone who
+   > has it can message you *as* TeleFridge, including a fake "all clear". It also
+   > shows up inside web addresses in the device's logs, so **redact any log
+   > before pasting it into an issue or a forum.**
+   > [`SECURITY.md`](./SECURITY.md) explains what to look for and how to get a new
+   > token if the old one ever gets out.
 4. **Flash it** — connect the M5StickC over USB-C and install `telefridge.yaml`
    with ESPHome. You should get a "hello" message on Telegram.
 5. **Place it** — put the box sensor inside your insulated box, the box in the
@@ -200,6 +217,14 @@ community-maintained code, so the project can focus on the part that matters:
 keeping your insulin safe. It also keeps the whole setup **readable and
 tweakable** — the configuration is a plain text file, not a locked-down black box —
 so anyone can see exactly what the device does and adjust it to their own fridge.
+
+## Security
+
+The device holds your Wi-Fi details and your Telegram bot token, and there is one
+leak that catches people out — **your bot token appears inside web addresses in
+the device's logs**, so a log pasted into an issue can hand it to a stranger.
+[`SECURITY.md`](./SECURITY.md) explains what to redact, how to get a fresh token
+from BotFather if one gets out, and how to report a problem privately.
 
 ## Contributing
 

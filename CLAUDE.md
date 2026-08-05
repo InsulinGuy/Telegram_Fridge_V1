@@ -41,7 +41,9 @@ also not real-time (readings are batched every 4 h) and not mains-powered
 (optimised for lowest average current).
 
 **ESPHome:** 2026.4.5 · **Device name:** telefridge · **Repo:**
-telefridge_StickC_V1 (split from `telefridge_V1` on 2026-08-04, ADR-025).
+`Telegram_Fridge_V1` on GitHub — referred to throughout this document by its
+working name **telefridge_StickC_V1** (split from `telefridge_V1` on 2026-08-04,
+ADR-025).
 
 ---
 
@@ -556,7 +558,7 @@ every sampling wake. Don't inline large lambdas in YAML; they live in `logger/*.
 ## File structure
 
 ```
-telefridge_StickC_V1/
+telefridge_StickC_V1/         ← published on GitHub as Telegram_Fridge_V1
 ├── CLAUDE.md                 ← this file
 ├── README.md                 ← the public front door: non-technical, user-facing
 ├── telefridge.yaml           ← main ESPHome config (authoritative)
@@ -564,6 +566,7 @@ telefridge_StickC_V1/
 ├── .gitignore                ← secrets.yaml / secrets_*.yaml / *.bak + build artifacts
 ├── LICENSE                   ← GPL-3.0-or-later
 ├── DISCLAIMER.md             ← liability / not-a-medical-device disclaimer
+├── SECURITY.md               ← what secrets the device holds, the bot-token-in-logs leak, rotation + reporting
 ├── CONTRIBUTING.md           ← contributor rules; restates the LOCKED 2–8 °C bounds + sensor roles
 ├── .claude/settings.json     ← PreToolUse hook: runs scripts/stamp_version.py before any esphome run/compile
 ├── .github/workflows/        ← release CI (tag push → GitHub Release) + host-test CI
@@ -831,7 +834,8 @@ land mid-message. The plain-text command reply takes the untagged form
 (`html=false`).
 
 ### ADR-025 — The StickC build lives in its own repo — *in force*
-Split out of `telefridge_V1` into its own repo, `telefridge_StickC_V1`, so each
+Split out of `telefridge_V1` into its own repo — working name
+`telefridge_StickC_V1`, published on GitHub as `Telegram_Fridge_V1` — so each
 board's LOCKED invariants and ADR history stay independent (no Feather-era
 assumption can leak in). Two consequences a reader needs: **history starts fresh**,
 so every `#NN` issue reference throughout this document cites the `telefridge_V1`
