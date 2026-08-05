@@ -2,7 +2,7 @@
 // TeleFridge V1 — Newton's-law-of-cooling predictor (ADR-013, issue #3).
 //
 // The box is a lumped thermal mass exchanging heat with the fridge air, so with
-// T_box = temp_a (box interior, SHT40) and T_fridge = temp_b (fridge air, STTS22H)
+// T_box = temp_a (box interior, SHT30) and T_fridge = temp_b (fridge air, DHT12)
 // Newton's law gives  T_box(t) = T_fridge − (T_fridge − T_box)·exp(−t/τ_box).
 // Solving for the time until T_box crosses a box CRIT bound T_thresh:
 //

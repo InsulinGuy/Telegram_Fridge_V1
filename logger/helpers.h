@@ -23,8 +23,8 @@ enum AlertState {
 
 // --- Per-sensor thresholds (°C), constexpr. See CLAUDE.md tables (ADR-011). ---
 //
-// Sensors are asymmetric: temp_a (SHT40) sits INSIDE the insulated box and is
-// the pharma-spec safety authority; temp_b (STTS22H) reads the fridge air and is
+// Sensors are asymmetric: temp_a (SHT30) sits INSIDE the insulated box and is
+// the pharma-spec safety authority; temp_b (DHT12) reads the fridge air and is
 // an advisory leading indicator. Each is classified against its own set.
 
 // Box interior (temp_a) — pharma-spec, LOCKED. CRIT bounds pinned to 2–8 °C.
@@ -49,9 +49,10 @@ constexpr float THRESH_FRIDGE_CRIT_HIGH = 9.0f;
 //
 // FAULT_CONSEC_N — consecutive NaN (either sensor) or stuck-STUCK_TEMP_B (temp_b)
 //   reads before a fault latches. STALE_SAMPLES_M — consecutive unchanged-to-3dp
-//   reads (either sensor) flagged as stale (8 × 15 min ≈ 2 h). STUCK_TEMP_B is
-//   the STTS22H cold-power-up default (see #44); a 0.00 that survives wake_cycle's
-//   poll-until-valid loop is a genuine fault, not the cold-wake artefact.
+//   reads (either sensor) flagged as stale (8 × 15 min ≈ 2 h). STUCK_TEMP_B = 0.00
+//   dates from the retired STTS22H, whose cold-power-up default it was (see #44);
+//   it is kept for the DHT12 because a hard 0.00 surviving wake_cycle's
+//   poll-until-valid loop is a genuine fault from any part on that bus.
 constexpr uint16_t FAULT_CONSEC_N  = 2;
 constexpr uint16_t STALE_SAMPLES_M = 8;
 constexpr float    STUCK_TEMP_B    = 0.0f;
@@ -117,11 +118,11 @@ inline bool is_crit(AlertState s) {
   return s == ALERT_CRIT_LOW || s == ALERT_CRIT_HIGH;
 }
 
-// --- Battery (JST single-cell Li-ion — the sole supply, issue #42) --------
-// The Adafruit ESP32 Feather V2 has NO fuel-gauge IC (no MAX17048 on I²C — the
-// bus scan confirmed only 0x3C/0x44). Battery voltage is read via the board's
-// onboard 2:1 resistor divider on GPIO35 / A13 (`VOLTAGE_MONITOR`): analog read
-// × 2 = cell volts. SoC (%) is then estimated from that voltage by li_ion_soc().
+// --- Battery (M5StickC onboard ~95 mAh Li-ion — the sole supply, ADR-022) ---
+// This board has NO fuel-gauge IC and NO ADC divider. Cell voltage comes from
+// the AXP192 PMIC's own 12-bit ADC (regs 0x78/0x79, 1.1 mV/LSB), read over the
+// bit-banged software I²C in axp192.h (ADR-023); a wire-level failure returns
+// NaN, never 0. SoC (%) is then estimated from that voltage by li_ion_soc().
 //
 // SoC (%) below BATT_WARN_PCT raises a low-battery Telegram warning on an early
 // radio wake. The alert is latched (g_last_batt_alert) so it fires once per

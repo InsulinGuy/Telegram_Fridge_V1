@@ -35,11 +35,11 @@ sets (per-sensor box/fridge — **ADR-011**).
 
 | Setting | ID (`RuntimeSettings`) | Default | `min` | `max` | `step` | Why runtime-tunable |
 |---------|------------------------|---------|-------|-------|--------|---------------------|
-| Box CRIT low  | `box_crit_low`   | 2.0 °C | 0.0 | 10.0 | 0.1 | Box (`temp_a`, SHT40) pharma band. Strict 2–8 °C for insulin, but repurposing (drinks fridge, fermentation chamber) moves all four. |
+| Box CRIT low  | `box_crit_low`   | 2.0 °C | 0.0 | 10.0 | 0.1 | Box (`temp_a`, SHT30) pharma band. Strict 2–8 °C for insulin, but repurposing (drinks fridge, fermentation chamber) moves all four. |
 | Box WARN low  | `box_warn_low`   | 3.0 °C | 0.0 | 10.0 | 0.1 | ″ |
 | Box WARN high | `box_warn_high`  | 7.0 °C | 0.0 | 10.0 | 0.1 | ″ |
 | Box CRIT high | `box_crit_high`  | 8.0 °C | 0.0 | 10.0 | 0.1 | ″ |
-| Fridge CRIT low  | `fridge_crit_low`  | 0.0 °C | -20.0 | 30.0 | 0.1 | Fridge (`temp_b`, STTS22H) advisory band. Tuning to the appliance's compressor duty cycle is an open CLAUDE.md item. Absolute CRIT here is batched, not an early alert. |
+| Fridge CRIT low  | `fridge_crit_low`  | 0.0 °C | -20.0 | 30.0 | 0.1 | Fridge (`temp_b`, DHT12) advisory band — advisory in *authority* (the box is the compliance line), but a fridge CRIT still fires an early alert; only WARN is batched. Tunable to the appliance's compressor duty cycle. |
 | Fridge WARN low  | `fridge_warn_low`  | 2.0 °C | -20.0 | 30.0 | 0.1 | ″ |
 | Fridge WARN high | `fridge_warn_high` | 6.0 °C | -20.0 | 30.0 | 0.1 | ″ |
 | Fridge CRIT high | `fridge_crit_high` | 9.0 °C | -20.0 | 30.0 | 0.1 | ″ |

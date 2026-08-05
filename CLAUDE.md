@@ -311,8 +311,11 @@ payload-safety authority; the fridge sensor is a leading indicator. There are
 
 1. **Box absolute thresholds** (`temp_a`, five-zone) — the pharma-compliance
    authority; CRIT is a real "act now" event. **Implemented.**
-2. **Fridge absolute thresholds** (`temp_b`, five-zone) — advisory only; its CRIT
-   is batched into the 4-h report, not an early alert. **Implemented.**
+2. **Fridge absolute thresholds** (`temp_b`, five-zone) — advisory *in authority*
+   (it is not the compliance line), but its CRIT **does** fire an early Wi-Fi
+   alert: a fridge in CRIT is an appliance failure, and waiting up to 4 h to say
+   so wastes the lead time the sensor exists to buy. WARN stays batched.
+   **Implemented.**
 3. **Predicted breach** — physics-based estimate of when the box will cross a CRIT
    bound. Adds `ALERT_PREDICTED_BREACH_LOW/HIGH`. **Implemented — unvalidated
    until `TAU_BOX_MIN` is calibrated.**
@@ -344,9 +347,11 @@ Do not silently loosen these — they are the compliance line.
 ### Fridge ambient (`temp_b`, DHT12) — advisory bounds
 
 Wider bands, shifted slightly lower (a fridge holding 2 °C is fine; a box at 2 °C
-is on the edge). Absolute CRIT here is **advisory only** — reported in the 4-h
-digest, not an early alert. The predictor is the early-alert path for fridge
-problems.
+is on the edge). These bounds are **advisory in authority** — the box (`temp_a`)
+is the compliance line, and nothing here can put the payload out of spec on its
+own. But a fridge CRIT still **fires an early Wi-Fi alert** (`temp_b` in a CRIT
+zone means the appliance itself has failed), alongside the predictor. Fridge WARN
+is batched into the 4-h digest.
 
 |      | Zone          | Condition                   | Value        | Alert state      |
 |------|---------------|-----------------------------|--------------|------------------|
@@ -414,15 +419,21 @@ Box-only; box CRIT and predicted breach take precedence on the same wake.
 | Box CRIT (`temp_a`, absolute) | **Early Wi-Fi alert** on entry, hold-off armed on send-ack |
 | Box CRIT — still in-zone      | **Reminder** every `crit_realert_holdoff_min` min (`0`=off); **escalation** on ≥1.5 °C worsening — ADR-019 |
 | Box WARN (`temp_a`, absolute) | Batched into scheduled 4-h report                      |
-| Fridge CRIT (`temp_b`, abs.)  | Batched into scheduled 4-h report (advisory)           |
+| Fridge CRIT (`temp_b`, abs.)  | **Early Wi-Fi alert** on entry (shares the box-CRIT script + `g_last_alert` hold-off); **no** reminder/escalation |
 | Fridge WARN (`temp_b`, abs.)  | Batched into scheduled 4-h report                      |
 | Predicted breach              | **Early Wi-Fi alert** on entry, hold-off armed on send-ack; **escalation** on ETA halving |
 | Box approach (`temp_a`)       | **Early scheduled report** (not alert), resets cadence *(design)* |
 
-- The early **box-CRIT** path uses `g_last_alert` as a hold-off so it doesn't
-  re-alert every sample while `temp_a` stays in the same CRIT zone. While in-zone
-  it may still speak — a time **reminder** or a worsening **escalation** (ADR-019).
+- The early **CRIT** path fires when **either** sensor enters a CRIT zone
+  (`is_crit(a) || is_crit(b)`) and uses `g_last_alert` as a shared hold-off, so it
+  doesn't re-alert every sample while either reading stays critical. The body
+  names whichever sensor(s) are in CRIT (`build_crit_alert("Box"/"Fridge", …)`).
   The scheduled report still fires normally.
+- **Only the box re-alerts.** While in-zone, a time **reminder** or a worsening
+  **escalation** (ADR-019) speaks again only for `temp_a` — a fridge CRIT alerts
+  once on entry and then goes quiet until it clears and re-enters. That
+  asymmetry *is* the fridge's advisory status: loud enough to interrupt once,
+  never loud enough to nag.
 - **Hold-offs advance on send-acknowledgement, not on state entry (ADR-018).** A
   failed send leaves the latch untouched, so the next wake re-evaluates and
   retries instead of going silent mid-emergency.
@@ -547,17 +558,21 @@ every sampling wake. Don't inline large lambdas in YAML; they live in `logger/*.
 ```
 telefridge_StickC_V1/
 ├── CLAUDE.md                 ← this file
+├── README.md                 ← the public front door: non-technical, user-facing
 ├── telefridge.yaml           ← main ESPHome config (authoritative)
-├── secrets.yaml.example      ← template for wifi + Telegram secrets (real secrets.yaml is git-ignored)
+├── secrets.yaml.example      ← template for wifi + Telegram + OTA secrets (real secrets.yaml is git-ignored)
+├── .gitignore                ← secrets.yaml / secrets_*.yaml / *.bak + build artifacts
 ├── LICENSE                   ← GPL-3.0-or-later
 ├── DISCLAIMER.md             ← liability / not-a-medical-device disclaimer
-├── .github/workflows/        ← release CI
+├── .claude/settings.json     ← PreToolUse hook: runs scripts/stamp_version.py before any esphome run/compile
+├── .github/workflows/        ← release CI (tag push → GitHub Release) + host-test CI
 ├── certs/
 │   └── telegram_root_ca.pem  ← pinned GoDaddy Root CA G2 for api.telegram.org (public)
 ├── fonts/                    ← OFL Liberation Sans TTFs for the button TFT screen (ADR-026)
 ├── docs/
 │   ├── settings-inventory.md    ← runtime-settings inventory + guardrails (the logger/settings.h contract)
-│   └── telegram-message-ia.md   ← Telegram message info-architecture + HTML spec (ADR-017)
+│   ├── telegram-message-ia.md   ← Telegram message info-architecture + HTML spec (ADR-017)
+│   └── img/                     ← illustrative Telegram mockups (SVG) used by README.md
 ├── logger/                   ← C++ headers, pulled in via esphome: includes:
 │   ├── helpers.h             ← alert enum (8 states), per-sensor thresholds + predictor constants, alert_state(), zone_emoji + zone_color (TFT, ADR-026)/html_escape
 │   ├── axp192.h              ← bit-banged software I²C on G21/G22 + axp192_init() + axp192_batt_voltage() (ADR-023)
@@ -671,7 +686,9 @@ Because the payload lives in an insulated box inside the fridge, the two sensors
 measure different things: `temp_a` (box interior) is the pharma-compliance
 authority (2–8 °C); `temp_b` (fridge air) is a leading indicator whose value is
 its *relationship* to the box, not its absolute reading. Consequences: per-sensor
-threshold sets; fridge absolute CRIT downgraded to advisory; the early-warning
+threshold sets; fridge absolute CRIT advisory **in authority** (it never
+establishes compliance) though it still alerts early, and it neither reminds nor
+escalates — only the box does (ADR-019); the early-warning
 alert derived from both sensors (ADR-013). Placement is locked; swapping them is
 a compliance defect. The *parts* were later replaced (ADR-021) but the roles and
 the `temp_a`/`temp_b` contract are unchanged. All predictor math uses

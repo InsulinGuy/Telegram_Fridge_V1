@@ -27,6 +27,9 @@ See [`DISCLAIMER.md`](./DISCLAIMER.md) for the full details.
 - 💬 Sends you a tidy status message on Telegram every few hours (also set by the user).
 - 🚨 Warns you **right away** if things head out of the safe **2–8 °C** range.
 - 🔋 Runs on its own small rechargeable battery and tells you when to charge it.
+- 🔘 **Press the button** on the side any time you walk past: the little screen
+  lights up for 3 seconds with the current status, and it sends you a report
+  straight away.
 
 ## How the alerting works
 
@@ -48,7 +51,8 @@ flowchart TD
     D -- "Safe (3–7°C)" --> P{Trending toward<br/>the limit soon?}
     P -- Yes --> E["⚠️ EARLY WARNING<br/><b>Messages you now</b>"]
     P -- No --> G{Fridge air<br/>out of range?}
-    G -- Yes --> Adv["🟦 Advisory<br/>Added to next check-in"]
+    G -- "Badly (below 0°C<br/>or above 9°C)" --> AdvC["🚨 FRIDGE CRITICAL<br/><b>Messages you now</b>"]
+    G -- "Slightly" --> Adv["⬜ Advisory<br/>Added to next check-in"]
     G -- No --> OK["🟢 All good"]
     OK --> S([Every 4 hours:<br/>routine check-in on Telegram])
     Y --> S
@@ -57,25 +61,33 @@ flowchart TD
     classDef now fill:#ffd7d7,stroke:#c0392b,color:#111;
     classDef soft fill:#fff3cd,stroke:#b8860b,color:#111;
     classDef good fill:#d7f5dd,stroke:#27ae60,color:#111;
-    class R,E,F now;
+    class R,E,F,AdvC now;
     class Y,Adv soft;
     class OK,S good;
 ```
 
-In short: a real problem (too warm, too cold, or a broken sensor) **messages you
-immediately**; smaller things (a gentle drift toward the edge, or the fridge air
-drifting) simply **ride along in the next routine check-in**. It even watches the
-trend, so a slow failure gets an **early heads-up before** your insulin is
-actually out of range. It also sends a **low-battery warning** so it never goes
+In short: a real problem — the box too warm or too cold, a broken sensor, or the
+fridge itself failing — **messages you immediately**; smaller things (a gentle
+drift toward the edge) simply **ride along in the next routine check-in**. It even
+watches the trend, so a slow failure gets an **early heads-up before** your insulin
+is actually out of range. It also sends a **low-battery warning** so it never goes
 quiet without telling you first.
+
+Only the *box* nags: while the box stays critical it keeps reminding you. A fridge
+problem speaks once, so a noisy appliance can't drown out the reading that matters.
+
+> ⚠️ The "early warning" prediction ships **uncalibrated**. It estimates how fast
+> your box warms up using a constant (`TAU_BOX_MIN`) that has to be measured
+> against *your* box; until you do, treat its timings as a rough hint, not a
+> countdown. The immediate 2–8 °C alerts don't depend on it.
 
 *(The physics and fine-tuning behind the "early warning" live in
 [`CLAUDE.md`](./CLAUDE.md) for the curious.)*
 
 ## Telegram is the whole interface
 
-- 📱 **No app to install, no account to sign up for, no website or server to run,
-  and no piles of data to manage.** TeleFridge talks to you entirely through
+- 📱 **No app to install, no extra account beyond Telegram, no website or server
+  to run, and no piles of data to manage.** TeleFridge talks to you entirely through
   [Telegram](https://telegram.org), a free chat app you may already use.
 - ⚙️ **You control it by messaging it back.** Want a different safe range, or
   limits tuned to your fridge? Send it a short message — no cable, no computer, no
@@ -93,6 +105,7 @@ silly value is politely refused rather than accepted.
 | `/defaults` | Put every setting back to the factory values |
 | `/setbox <cold> <cool> <warm> <hot>` | Set the four **box** limits in °C (e.g. `2 3 7 8`) — the safe range for your insulin |
 | `/setfridge <cold> <cool> <warm> <hot>` | Set the four **fridge-air** limits in °C (the early-warning band) |
+| `/setbox <name> <value>` | Change one box limit on its own — `crit_low`, `warn_low`, `warn_high` or `crit_high` (e.g. `/setbox crit_high 8.5`). Works for `/setfridge` too |
 | `/setreport <1–32>` | How many readings per check-in (16 = a report every 4 hours) |
 | `/setinterval <1–60>` | Minutes between readings (default 15) |
 | `/setholdoff <0–1440>` | Minutes between repeat reminders while still in a critical alert (0 = remind once) |
@@ -116,6 +129,11 @@ wrong. *(Illustrative mockups — real photos coming soon.)*
 
 ![Example TeleFridge critical alert in Telegram](./docs/img/telegram-alert-mockup.svg)
 
+**On the device itself:** the screen stays off to save battery. Press the button
+and it wakes for 3 seconds, showing the verdict (colour-coded the same way as the
+messages), both temperatures and the battery — then goes dark again and sends you
+a report. Nothing else ever turns the screen on.
+
 ## What you need
 
 - An **[M5StickC](https://docs.m5stack.com/en/core/m5stickc)** — the little
@@ -138,9 +156,16 @@ wrong. *(Illustrative mockups — real photos coming soon.)*
    that tells the bot who to message). Full walkthrough:
    [How do I create a bot?](https://core.telegram.org/bots#how-do-i-create-a-bot)
 3. **Add your details** — copy `secrets.yaml.example` to `secrets.yaml` and fill in
-   your Wi-Fi name and password, plus the **bot token** and **chat ID** from step 2
-   (`telegram_bot_token` and `telegram_chat_id`). This file stays on your computer
-   and is never shared.
+   **all six** values, or the build will stop with a missing-secret error:
+   - `wifi_ssid` and `wifi_password` — your Wi-Fi network.
+   - `wifi_ssid_2` — a second network to fall back to. If you only have one, just
+     put the same name as `wifi_ssid` here. (Both networks use `wifi_password`.)
+   - `telegram_bot_token` and `telegram_chat_id` — from step 2.
+   - `ota_password` — any random string, used to protect wireless updates. Make one
+     with `openssl rand -hex 16`.
+
+   This file stays on your computer and is never shared — it is already listed in
+   `.gitignore`.
 4. **Flash it** — connect the M5StickC over USB-C and install `telefridge.yaml`
    with ESPHome. You should get a "hello" message on Telegram.
 5. **Place it** — put the box sensor inside your insulated box, the box in the

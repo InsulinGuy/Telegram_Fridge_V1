@@ -47,7 +47,7 @@ is **information architecture**, not styling.
 
 1. **A faulted sensor renders as Zone `OK`.** `build_report()` never calls
    `sensor_faulted()` (`ring_buffer.h:289`), and `alert_state()` returns
-   `ALERT_OK` on NaN (`helpers.h:73`). A dead SHT40 — the *primary safety sensor*
+   `ALERT_OK` on NaN (`helpers.h:73`). A dead SHT30 — the *primary safety sensor*
    — is reported as healthy. Fault detection already runs every wake
    (`faults_observe()`, `telefridge.yaml:314`); the report simply ignores it.
 2. **The predictor never reaches any report.** `report.h` does not even
@@ -297,7 +297,7 @@ Follow the existing host-test pattern (`test/test_predictor.cpp`,
 | Unicode line graph in the report | **#22** |
 | Graph *image* via `sendPhoto` / QuickChart | **#55** |
 | `<tg-spoiler>` | dropped — no sensitive content in these messages |
-| SHT40 humidity (one YAML line away; `telefridge.yaml:126-133` declares temperature only) | separate feature decision |
+| SHT30 humidity (one YAML line away; `telefridge.yaml:126-133` declares temperature only) | separate feature decision |
 
 > **#50 reconciliation.** When this spec was written, `alert_state()` read only
 > the compiled `constexpr` bands, so the report could *display* an override it
@@ -327,7 +327,7 @@ Follow the existing host-test pattern (`test/test_predictor.cpp`,
 4. Force each alert path (temporarily narrowed thresholds, or a sensor unplugged
    for the fault path) and confirm each renders and returns **HTTP 200** — a 400
    means malformed HTML.
-5. **Unplug the SHT40 and confirm the report says `SENSOR FAULT`, not `OK`** —
+5. **Unplug the SHT30 and confirm the report says `SENSOR FAULT`, not `OK`** —
    this is the regression that motivated the work.
 
 ---

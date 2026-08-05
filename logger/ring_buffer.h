@@ -16,8 +16,8 @@ constexpr uint16_t RING_CAPACITY = 32;
 
 struct Sample {
   uint32_t epoch;    // unix time of the reading (0 if no valid clock yet)
-  float temp_a;      // SHT40 (Adafruit, STEMMA QT, I²C 0x44)
-  float temp_b;      // STTS22H (SparkFun Micro, STEMMA QT, I²C 0x3C)
+  float temp_a;      // SHT30 (M5 ENV II Unit, Grove, I²C 0x44) — box interior
+  float temp_b;      // DHT12 (M5 ENV HAT, HAT header, I²C 0x5C) — fridge air
 };
 
 // --- Persistent (RTC slow memory) state ---------------------------------
@@ -79,14 +79,14 @@ RTC_DATA_ATTR uint8_t  g_escal_count        = 0;
 // role for the absolute-CRIT path. Holds the last predicted-breach state emitted.
 RTC_DATA_ATTR AlertState g_last_predict_alert = ALERT_OK;
 
-// Fridge EMA source: the last PREDICT_SMOOTH_N temp_b (STTS22H, fridge-air)
+// Fridge EMA source: the last PREDICT_SMOOTH_N temp_b (DHT12, fridge-air)
 // samples, kept to average out compressor cycling before the projection
 // (ADR-011: the predictor smooths the *fridge* signal, temp_b — issue #2 comment).
 RTC_DATA_ATTR float    g_fridge_hist[PREDICT_SMOOTH_N];
 RTC_DATA_ATTR uint16_t g_fridge_hist_count = 0;   // valid entries held
 RTC_DATA_ATTR uint16_t g_fridge_hist_head  = 0;   // next write index (wraps)
 
-// Box EMA source: the last PREDICT_SMOOTH_N temp_a (SHT40, box-interior) samples.
+// Box EMA source: the last PREDICT_SMOOTH_N temp_a (SHT30, box-interior) samples.
 // The box moves slowly, so this mainly buys single-sample glitch rejection at the
 // cost of a small lag (an alert may arrive a sample or two later — accepted; see
 // issue #3). Mirrors the fridge ring; both smoothed values feed the predictor.
@@ -109,8 +109,9 @@ RTC_DATA_ATTR uint16_t   g_predict_hist_count = 0; // valid entries held
 RTC_DATA_ATTR uint16_t   g_predict_hist_head  = 0; // next write index (wraps)
 
 // --- Sensor-fault state (RTC slow memory) — issue #12 -------------------
-// Per-sensor detection of silent failures: NaN reads (both), stuck-0.00 (temp_b,
-// the STTS22H cold-power-up default), and stale/unchanged readings (both). These
+// Per-sensor detection of silent failures: NaN reads (both), stuck-0.00 (temp_b —
+// inherited from the retired STTS22H's cold-power-up default, kept because a
+// hard 0.00 from any temp_b part is a fault), and stale readings (both). These
 // counters persist across deep sleep so a fault is caught across consecutive
 // wakes, and reset to zero on cold boot (a fresh RTC). See helpers.h constants.
 //

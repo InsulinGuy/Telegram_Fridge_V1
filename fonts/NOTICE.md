@@ -8,5 +8,5 @@ Version 1.1** (OFL-1.1), which is GPL-compatible.
 - Upstream: https://github.com/liberationfonts/liberation-fonts
 - License text: https://openfontlicense.org/
 
-These are used only to render the brief on-device boot/button status screens on
-the M5StickC TFT (ADR-026). They are not modified.
+These are used only to render the brief on-device button status screen on the
+M5StickC TFT (ADR-026). They are not modified.
