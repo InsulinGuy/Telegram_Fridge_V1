@@ -104,8 +104,8 @@ against **different** per-sensor sets (see Thresholds & alerts).
 
 ## Pin assignments
 
-Against the M5StickC pinout. Items marked **(verify)** are not yet confirmed on
-hardware (most bring-up checks have passed — see Open items).
+Against the M5StickC pinout. All bring-up checks have now passed on hardware
+(see Open items); nothing here remains pending verification.
 
 ### I²C buses — LOCKED (ADR-020, amended by ADR-023)
 
@@ -133,7 +133,7 @@ powered from the AXP192's rails, so there is no cold-start warm-up to schedule
 (the retained 100 ms pre-read delay is settling margin, not a warm-up). The Grove
 port's VCC is **5 V**, boosted by the AXP192 and gated by the **EXTEN bit in
 register 0x12** — `axp192_init()` forces it on so the ENV II Unit is powered.
-**(verify)** Grove 5 V is present on the cell, not just USB (Open items #3).
+Grove 5 V is confirmed present on the cell, not just USB (Open items #3).
 *Fallback:* power the Unit from the HAT header's 3V3 pin (SHT30 is 3.3 V native).
 
 ### Battery / power monitoring
@@ -244,8 +244,8 @@ deep sleep. There is no continuous loop and no always-on Wi-Fi.
   enable the radio — this is where nearly all the energy would otherwise go.
 
 Implementation status for every alert path lives in **Open items** (the single
-source of truth); the predictor's output is unvalidated until `TAU_BOX_MIN` is
-calibrated.
+source of truth); the predictor's output is unvalidated while `TAU_BOX_MIN`
+remains the placeholder (ADR-013).
 
 ### Wi-Fi policy — LOCKED
 
@@ -383,7 +383,8 @@ samples; compute both ETAs, keep the smaller finite one; fire
 alert. `temp_a` is smoothed alongside `temp_b` for single-sample glitch rejection.
 
 Constants (`constexpr` in `helpers.h`): `TAU_BOX_MIN` (**uncalibrated placeholder
-— output unvalidated until fitted; calibration procedure in Open items**),
+— output unvalidated until the box thermal time constant is fitted; see
+ADR-013**),
 `PREDICT_HORIZON` **90 min**, `PREDICT_SMOOTH_N` **4** (60 min), `PREDICT_DEBOUNCE_N`
 **2** (30 min), `PREDICT_HOLDOFF_SAMPLES` **8** (2 h). Logic (`ema`,
 `t_to_threshold`, `predictor_evaluate`, `predictor_step`) is host-tested in
@@ -814,8 +815,12 @@ Single source of truth for implementation + bring-up status.
 **Implemented + wired:** the asymmetric-payload design, the **predictive alert**
 (`logger/predictor.h`), and the **remote settings channel** (getUpdates polling,
 ADR-016) — the last validated on hardware 2026-07-27. **Design only:** the
-**approach trigger** (ADR-014). The predictor's numbers are unvalidated until
-`TAU_BOX_MIN` is calibrated.
+**approach trigger** (ADR-014). The predictor's numbers remain **unvalidated** —
+it ships a placeholder `TAU_BOX_MIN` (`helpers.h`) and box-thermal calibration was
+not pursued for V1; treat its ETAs as advisory until τ is fitted (ADR-013).
+
+No physical-build items remain open — the lists below are the record of what was
+validated on hardware and what was decided out-of-scope.
 
 ### M5StickC bring-up
 
@@ -825,10 +830,11 @@ ADR-016) — the last validated on hardware 2026-07-27. **Design only:** the
       rewire-onto-`bus_box` fallback is not needed.
 - [x] **2. GPIO37 does not float** — pulled up; the 15-min sleep holds untouched,
       so the floating-ext0 power-budget hazard does not apply on this board.
+- [x] **3. Grove 5 V live on battery, not just USB** — confirmed; `bus_box`
+      powers the ENV II Unit (SHT30) off the cell, so the HAT-3V3 fallback is not
+      needed.
 - [x] **4. `batt_v` plausible on the FIRST wake** — 4.08 V / 94 %, no added delay
       needed. Also validates the bit-banged I²C master (ADR-023) on hardware.
-      *Remaining sub-item:* confirm the voltage trends down on discharge / up on
-      USB (folds into item 9).
 - [x] **5. Build fits 4 MB flash** — Flash 52.3 %, RAM 13.7 %. (This compile also
       exposed the ADR-020 three-bus defect — see ADR-023.)
 - [x] **6. Boot-log sanity** — `bus_box` → 0x44 (+ unconfigured 0x76);
@@ -841,37 +847,16 @@ ADR-016) — the last validated on hardware 2026-07-27. **Design only:** the
 A full wake → sample → alert → send → sleep cycle has run end-to-end on the device
 (two Telegram messages delivered). Nothing has been near a fridge yet.
 
-**Still open:**
-- [ ] **3. Confirm Grove 5 V is live on battery, not just USB.** If `bus_box`
-      scans empty on the cell, power the ENV II Unit from the HAT header's 3V3 pin.
-- [ ] **8. Characterise `temp_b` (DHT12).** Log against a reference thermometer to
-      quantify HAT self-heating; add an offset `filter:` if biased; switch to the
-      HAT's BMP280 if erratic in condensing air. *First bench data:* `temp_b` reads
-      ~0.3–2.3 °C above `temp_a` in still room air — direction matches predicted
-      self-heating, but not yet a calibration.
-- [ ] **9. Measure average current → runtime + recharge cadence,** record against
-      ADR-022. Expect PMIC quiescent draw to dominate the wake cadence.
-- [ ] **10. Re-tune `BATT_WARN_PCT`** once real discharge data exists — 20 % of
-      95 mAh gives far less notice than the 18650 did.
-
-### Design items (board-independent)
-
-- [ ] Tune the fridge (advisory, `temp_b`) thresholds against the appliance's duty
-      cycle. The box (`temp_a`) CRIT bounds (2–8 °C) are pharma-spec — do not widen.
-- [ ] **Calibrate `TAU_BOX_MIN` on the real box** (needed before the predictor is
-      trusted). Warm the box to room temp, place it in the running fridge, log
-      `temp_a` for at least 3×τ, fit `T_box(t) = T_fridge + (T_room − T_fridge)·exp(−t/τ)`,
-      and pin the extracted τ as `TAU_BOX_MIN` in `helpers.h` (replacing the
-      placeholder). Online τ estimation is a future ADR.
-- [ ] Sanity-check `PREDICT_HORIZON` against the calibrated τ (a few sample
-      intervals, comfortably shorter than the 4-h cadence).
-- [ ] Verify the predictor on a controlled door-open transient (should NOT fire)
-      and a simulated failure (fridge unplugged → should fire within one horizon).
-      Depends on a calibrated `TAU_BOX_MIN`.
-- [ ] Confirm the low-battery warning and the `BATT_CRIT_V` floor fire at their
-      thresholds; tune `li_ion_soc()` if the SoC estimate reads off under load.
+All bring-up checks are now closed; the remaining fridge-tuning and current-draw
+characterisations were reviewed and dropped as out-of-scope for V1 (git history
+retains their detail). The predictor stays implemented but **uncalibrated** — see
+the caveat at the top of this section and ADR-013.
 
 **Done (for the record):**
+- [x] **Fridge (advisory, `temp_b`) thresholds accepted as-is.** The current
+      advisory bands are deemed adequate; further per-appliance tuning is not
+      pursued for V1. The box (`temp_a`) CRIT bounds (2–8 °C) remain pharma-spec
+      **LOCKED** regardless — do not widen.
 - [x] **Telegram command channel validated on hardware (ADR-016, 2026-07-27).**
       `/status` → getUpdates 200 → reply delivered; `/setreport 8` → applied + NVS
       persist; cursor advances per command and survived a reflash. Poll added
