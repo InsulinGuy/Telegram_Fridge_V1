@@ -1,6 +1,9 @@
 # Secrets — never commit. Copy secrets.yaml.example to secrets.yaml and fill in.
 secrets.yaml
 secrets_*.yaml
+# scripts/flash_hotspot_test.sh parks the real secrets.yaml here while it swaps
+# in the hotspot creds; an interrupted run leaves this file behind.
+*.bak
 
 # ESPHome build artifacts
 .esphome/
