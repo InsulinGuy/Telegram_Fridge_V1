@@ -180,18 +180,30 @@ inline const char *alert_label(AlertState s) {
   return "?";
 }
 
-// Status emoji for the Telegram verdict line (issue #63). Maps an alert zone to
-// a single traffic-light glyph: 🟢 OK / 🟡 WARN / 🔴 CRIT / 🛑 fault, ⚠️ predicted.
+// Status emoji for the Telegram verdict line (issue #63, made directional by
+// issue #2). Cold zones render blue and warm zones red, matching the thermometer
+// gradient documented in the CLAUDE.md threshold tables.
+//
+// Two mappings here are deliberate and must not be "tidied" back:
+//   * ALERT_CRIT_LOW is 🟦, not 🔴, even though a sub-2 °C box is a pharma-spec
+//     breach (ADR-011) exactly as serious as a hot one. The gradient is the
+//     documented visual language; severity is carried by alert_label()'s
+//     "TOO COLD" and the alert's explicit limit line, not by hue alone.
+//   * ALERT_SENSOR_FAULT is 🔧 — off the scale in *shape* as well as hue. A
+//     fault is not a point on the thermal scale, it is the absence of a
+//     trustworthy reading, and the previous 🛑 was a red blob easily mistaken
+//     for 🔴 at inline render size. Zero-hue tiles (⬛/⬜) can't be used: each
+//     disappears into one of Telegram's two themes.
 inline const char *zone_emoji(AlertState s) {
   switch (s) {
+    case ALERT_CRIT_LOW:               return "\xF0\x9F\x9F\xA6";          // 🟦
+    case ALERT_WARN_LOW:               return "\xF0\x9F\x94\xB7";          // 🔷
     case ALERT_OK:                     return "\xF0\x9F\x9F\xA2";          // 🟢
-    case ALERT_WARN_LOW:
     case ALERT_WARN_HIGH:              return "\xF0\x9F\x9F\xA1";          // 🟡
-    case ALERT_CRIT_LOW:
     case ALERT_CRIT_HIGH:              return "\xF0\x9F\x94\xB4";          // 🔴
     case ALERT_PREDICTED_BREACH_LOW:
     case ALERT_PREDICTED_BREACH_HIGH:  return "\xE2\x9A\xA0\xEF\xB8\x8F";  // ⚠️
-    case ALERT_SENSOR_FAULT:           return "\xF0\x9F\x9B\x91";          // 🛑
+    case ALERT_SENSOR_FAULT:           return "\xF0\x9F\x94\xA7";          // 🔧
   }
   return "\xF0\x9F\x9F\xA1";                                              // 🟡 (unknown)
 }

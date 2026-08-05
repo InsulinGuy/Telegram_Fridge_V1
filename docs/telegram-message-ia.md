@@ -147,7 +147,7 @@ them.
 Today this renders as `A | 0.0 | 0.0 | 0.0 | 0.0 | OK`. Proposed:
 
 ```html
-🛑 <b>BOX SENSOR FAULT — no reading</b>
+🔧 <b>BOX SENSOR FAULT — no reading</b>
 <i>box state unknown · fridge 5.1 °C (still OK)</i>
 <pre>         Cur   Min   Max   Avg
 Box        —     —     —     —
@@ -197,7 +197,10 @@ watching.
 
 - Add `html_escape(const std::string&)` — `&`→`&amp;`, `<`→`&lt;`, `>`→`&gt;`.
   Lives here rather than `report.h` so `settings.h` / `commands.h` can reuse it.
-- Add `zone_emoji(AlertState)` → `🟢 / 🟡 / 🔴 / 🛑`.
+- Add `zone_emoji(AlertState)` → the directional zone gradient
+  `🟦 / 🔷 / 🟢 / 🟡 / 🔴`, plus `⚠️` predicted breach and `🔧` sensor fault
+  (issue #2). Cold CRIT is blue by decision and fault is off-scale in shape as
+  well as hue — rationale in the `zone_emoji()` comment.
 - Reuse the existing `alert_label()` (`:140`) — it already returns
   `"SENSOR FAULT"`, `"TRENDING COLD"` and `"TRENDING WARM"`, three labels no
   message can currently reach.

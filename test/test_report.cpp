@@ -126,8 +126,51 @@ int main() {
     CHECK(html_ok(m));
     CHECK(has(m, "SENSOR FAULT"));
     CHECK(has(m, "no reading"));
-    CHECK(has(m, "\xF0\x9F\x9B\x91"));          // 🛑
+    CHECK(has(m, "\xF0\x9F\x94\xA7"));          // 🔧 off-scale fault glyph
+    CHECK(!has(m, "\xF0\x9F\x94\xB4"));         // and never 🔴 — the confusion issue #2 fixes
     CHECK(!has(m, "Box OK"));                   // the defect this fixes
+  }
+
+  // --- 3b. Cold zones render blue, not red (issue #2 gradient) ---------------
+  // The low half of the scale had no coverage at all before this, which is how
+  // zone_emoji() and the CLAUDE.md tables were able to drift apart.
+  {
+    reset();
+    for (int i = 0; i < 16; i++) ring_push(1000u + i * 900u, 2.5f, 3.0f);  // box WARN_LOW
+    std::string m = report();
+    CHECK(html_ok(m));
+    CHECK(has(m, "\xF0\x9F\x94\xB7"));          // 🔷
+    CHECK(has(m, "COLD"));
+    CHECK(!has(m, "\xF0\x9F\x9F\xA1"));         // not the old collapsed 🟡
+  }
+  {
+    reset();
+    for (int i = 0; i < 15; i++) ring_push(1000u + i * 900u, 4.0f, 5.0f);
+    ring_push(1000u + 15 * 900u, 1.4f, 0.5f);   // latest reading in box CRIT_LOW
+    std::string m = report();
+    CHECK(html_ok(m));
+    CHECK(has(m, "\xF0\x9F\x9F\xA6"));          // 🟦 — blue by decision, see zone_emoji()
+    CHECK(has(m, "TOO COLD"));                  // severity carried by the label
+    CHECK(has(m, "out of range"));
+    CHECK(!has(m, "Box OK"));
+  }
+
+  // --- 3c. Boot message glyph tracks the box zone (issue #2) -----------------
+  // It used to hard-code 🟢, so booting beside an already-warm box announced
+  // itself green.
+  {
+    reset();
+    std::string m = build_boot_msg(/*ta*/8.6f, /*tb*/9.4f, -67, 42, 1000u, 240u, 4.10f, 95.0f);
+    CHECK(html_ok(m));
+    CHECK(has(m, "\xF0\x9F\x94\xB4"));          // 🔴 box CRIT_HIGH
+    CHECK(!has(m, "\xF0\x9F\x9F\xA2"));         // not green
+    CHECK(has(m, "online"));
+  }
+  {
+    reset();
+    std::string m = build_boot_msg(/*ta*/4.2f, /*tb*/5.1f, -67, 42, 1000u, 240u, 4.10f, 95.0f);
+    CHECK(html_ok(m));
+    CHECK(has(m, "\xF0\x9F\x9F\xA2"));          // 🟢 healthy box still reads green
   }
 
   // --- 4. Empty buffer ------------------------------------------------------

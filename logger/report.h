@@ -284,7 +284,9 @@ inline std::string build_boot_msg(float ta, float tb, int rssi, uint32_t uptime_
                                   float batt_v, float batt_pct) {
   AlertState sa = alert_state_live(ta, /*is_box=*/true);   // live bands (issue #50)
   AlertState sb = alert_state_live(tb, /*is_box=*/false);
-  std::string out = "\xF0\x9F\x9F\xA2 <b>TeleFridge ";                   // 🟢
+  // Headline glyph tracks the box zone (temp_a, the ADR-011 authority) — a boot
+  // with an already-warm box must not announce itself green (issue #2).
+  std::string out = std::string(zone_emoji(sa)) + " <b>TeleFridge ";
   out += html_escape(FW_VERSION); out += " online</b>\n";
   char sc[64];
   snprintf(sc, sizeof(sc), "Box %.1f\xC2\xB0" "C \xC2\xB7 fridge %.1f\xC2\xB0" "C", ta, tb);
@@ -355,7 +357,10 @@ inline std::string build_predict_alert(AlertState side, float temp_a, float temp
 // sensor(s) are faulted with the reason. Reads the latched fault state set by
 // faults_observe(); call only when at least one sensor is faulted.
 inline std::string build_fault_alert() {
-  std::string text = "\xF0\x9F\x9B\x91 <b>TeleFridge SENSOR FAULT</b>";  // 🛑
+  // Glyph must stay in step with zone_emoji(ALERT_SENSOR_FAULT) — the alert and
+  // the report verdict describe the same condition (issue #2).
+  std::string text = std::string(zone_emoji(ALERT_SENSOR_FAULT))
+    + " <b>TeleFridge SENSOR FAULT</b>";
   if (sensor_faulted(true)) {
     text += "\n<i>Box: ";    text += html_escape(fault_reason(true));  text += "</i>";
   }

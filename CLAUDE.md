@@ -357,8 +357,12 @@ problems.
 
 `alert_state(float value, bool is_box)` selects the box set when `is_box` is true,
 the fridge set otherwise. Call with `is_box = true` for `temp_a`, `false` for
-`temp_b`. (The emoji scale above is the documented zone gradient; the Telegram
-report's verdict emoji don't yet use this directional scale — issue #2.)
+`temp_b`. The emoji scale above is the zone gradient `zone_emoji()` renders in the
+Telegram verdict line — docs and code share one visual language. Note the cold
+CRIT zone is 🟦 by decision: severity there is carried by the `TOO COLD` label and
+the alert's limit line, **not** by hue, and it is no less a compliance breach than
+🔴. Sensor fault renders **🔧** — deliberately off the scale in shape as well as
+hue, since it is the absence of a reading rather than a point on it.
 
 ### Predictive alert — IMPLEMENTED (`logger/predictor.h`) / TUNABLE (values)
 
@@ -442,10 +446,10 @@ body: chat_id=<CHAT_ID>&parse_mode=HTML&text=<url-encoded message>
 - **Body:** built in `logger/report.h` from the ring-buffer digest, using
   **`parse_mode=HTML`** with a four-tier hierarchy (transport is LOCKED; the body
   format is not). The tiers: **0 verdict** — one bold line answering *is the box
-  safe?* (`temp_a`), with a status emoji (today 🟢/🟡/🔴/🛑; a faulted sensor
-  reports **FAULT**, never a fabricated "OK"; directional-gradient alignment
-  pending — issue #2); **1 evidence** — box trend line + per-sensor min/max/mean
-  `<pre>` table; **2 context** — fridge advisory + excursion count; **3
+  safe?* (`temp_a`), with a status emoji following the directional zone gradient
+  (🟦/🔷/🟢/🟡/🔴, plus ⚠️ predicted breach and 🔧 sensor fault; a faulted sensor
+  reports **FAULT**, never a fabricated "OK"); **1 evidence** — box trend line +
+  per-sensor min/max/mean `<pre>` table; **2 context** — fridge advisory + excursion count; **3
   housekeeping** — window/uptime/wake/RSSI/fw/cadence/overrides in an expandable
   blockquote, battery just above. Full spec + escaping/tag-whitelist rules:
   `docs/telegram-message-ia.md` (ADR-017). Alert bodies add an `alert_footer()`
