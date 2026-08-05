@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/img/logo-dark.svg">
+  <img alt="TeleFridge" src="./docs/img/logo.svg" width="420">
+</picture>
+
 # TeleFridge
 
 **A tiny, battery-powered gadget that watches your fridge and messages you on

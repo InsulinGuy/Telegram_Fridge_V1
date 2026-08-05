@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 140" width="420" height="140" font-family="Helvetica, Arial, sans-serif" role="img" aria-label="TeleFridge — insulin, watched. And texted to you.">
+  <!--
+    TeleFridge horizontal lockup, LIGHT theme. Pair file: logo-dark.svg.
+    README picks between them with <picture media="(prefers-color-scheme: dark)">.
+
+    The mark geometry below is DUPLICATED from mark.svg on purpose: GitHub
+    proxies SVGs through camo and strips external references, so <use href="…">
+    into another file will not render. Change mark.svg and BOTH lockups
+    together, and keep this file geometrically identical to logo-dark.svg —
+    only fills differ, so the README header does not shift when a reader
+    toggles theme.
+
+    The wordmark is real <text>, not outlined paths, so the file stays
+    hand-editable and diffable like the rest of docs/img/. Cost: it renders
+    with whatever the reader has of the Helvetica/Arial stack. Accepted.
+  -->
+  <defs>
+    <linearGradient id="zones-l" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0.0" stop-color="#2962FF"/><stop offset="0.2" stop-color="#2962FF"/>
+      <stop offset="0.2" stop-color="#00B0FF"/><stop offset="0.4" stop-color="#00B0FF"/>
+      <stop offset="0.4" stop-color="#00C853"/><stop offset="0.6" stop-color="#00C853"/>
+      <stop offset="0.6" stop-color="#FFD600"/><stop offset="0.8" stop-color="#FFD600"/>
+      <stop offset="0.8" stop-color="#D50000"/><stop offset="1.0" stop-color="#D50000"/>
+    </linearGradient>
+    <clipPath id="body-l"><rect x="120" y="104" width="228" height="312" rx="30"/></clipPath>
+  </defs>
+
+  <!-- mark -->
+  <g transform="translate(6 14) scale(0.21875)">
+    <rect x="0" y="0" width="512" height="512" rx="112" fill="#12283d"/>
+    <rect x="120" y="104" width="228" height="312" rx="30"
+          fill="none" stroke="#e6edf3" stroke-width="20"/>
+    <g clip-path="url(#body-l)">
+      <rect x="120" y="232" width="228" height="34" fill="url(#zones-l)"/>
+    </g>
+    <rect x="306" y="152" width="18" height="56" rx="9" fill="#8aa0b6"/>
+    <rect x="306" y="292" width="18" height="88" rx="9" fill="#8aa0b6"/>
+    <g transform="translate(346 30) scale(5.4)">
+      <path d="M2 21 L23 12 L2 3 L2 10 L17 12 L2 14 Z" fill="#5288c1"/>
+    </g>
+  </g>
+
+  <!-- wordmark -->
+  <text x="136" y="72" font-size="46" font-weight="bold" letter-spacing="-1">
+    <tspan fill="#5288c1">Tele</tspan><tspan fill="#12283d">Fridge</tspan>
+  </text>
+  <text x="138" y="100" font-size="15" fill="#61738a">insulin, watched. And texted to you.</text>
+</svg>
