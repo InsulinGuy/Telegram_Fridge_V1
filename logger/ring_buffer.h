@@ -132,6 +132,22 @@ RTC_DATA_ATTR uint16_t g_stale_run_b  = 0;
 RTC_DATA_ATTR bool g_fault_latch_a = false;
 RTC_DATA_ATTR bool g_fault_latch_b = false;
 
+// --- TEMPORARY DIAGNOSTIC STATE (BOX SENSOR FAULT "no reading") -------------
+// Captured in wake_cycle at the moment of the read, carried in RTC memory to
+// whichever send happens later (a sampling wake has no radio, so the wake that
+// observes a fault is usually NOT the wake that reports it), and rendered by
+// with_device_tag(). Remove with the rest of the diagnostic scaffolding.
+//
+// Discriminator: nan_a=1 with EXTEN=0 means the Grove 5 V boost — temp_a's only
+// supply — was down, which is the ADR-026 rail-ownership theory and the one
+// mechanism that explains a replacement sensor and a new cable both failing.
+// nan_a=1 with EXTEN=1 exonerates the rail and points at the bus or at the
+// sht3xd deferred-publish path instead.
+RTC_DATA_ATTR int16_t  g_diag_rails    = -1;  // raw reg 0x12, or -1 = read failed
+RTC_DATA_ATTR uint8_t  g_diag_nan_a    = 0;   // was temp_a NaN at ring_push time
+RTC_DATA_ATTR uint16_t g_diag_nan_wakes = 0;  // cumulative wakes seen with NaN temp_a
+RTC_DATA_ATTR int16_t  g_diag_pwr      = -1;  // raw reg 0x00 (input power status), or -1
+
 // Append a sample (overwrites oldest when full).
 inline void ring_push(uint32_t epoch, float a, float b) {
   g_ring[g_ring_head] = Sample{epoch, a, b};

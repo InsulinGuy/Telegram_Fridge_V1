@@ -162,6 +162,20 @@ logger:
   # `HTTP Request failed; URL: https://api.telegram.org/bot<TOKEN>/sendMessage`.
   # Redact that before sharing a log, and rotate via @BotFather /revoke if it
   # ever got out. See SECURITY.md.
+  #
+  # ============ TEMPORARY — VERBOSITY LADDER (revert to `level: INFO`) ========
+  # Under test: does a FASTER main loop (less logging) break the sht3xd read?
+  # `level:` is therefore the ONLY variable — no `logs:` scoping, because a
+  # per-component override may only be LESS severe than the global level and
+  # would fail config at the low rungs, and because scoping would confound the
+  # very thing being measured. Detector is the ERROR-level "probe" lambda in
+  # wake_cycle, which survives every rung.
+  #
+  # NO `baud_rate:` OVERRIDE — widening the pipe was tried and does not work on
+  # this hardware. Both 921600 and 460800 came back as pure framing garbage; a
+  # sweep (115200/230400/460800/921600, scoring printable ASCII) found 115200 the
+  # ONLY rate this unit's USB-serial adapter decodes on macOS. Do not re-add a
+  # higher baud without re-running scripts/probe_baud.py on the capture machine.
   level: INFO
 
 ota:
@@ -384,12 +398,13 @@ network:
 wifi:
   enable_on_boot: false
   # Try both known networks each Wi-Fi-up wake; ESPHome scans and connects to
-  # whichever is present (same password for both). Order = preference.
+  # whichever is present. Each network carries its OWN password secret — they
+  # are not the same credential. Order = preference.
   networks:
     - ssid: !secret wifi_ssid
       password: !secret wifi_password
     - ssid: !secret wifi_ssid_2
-      password: !secret wifi_password
+      password: !secret wifi_password_2
   # Modem power-save (ESPHome ESP32 default: LIGHT) drops packets on this weak
   # link (-70 dB) and stalled TCP connects to api.telegram.org (issue #24).
   # The radio is only on ~1 min per 4 h by design, so NONE costs nothing here.
@@ -489,6 +504,21 @@ script:
       # the SHT30 nor the DHT12 has the STTS22H's cold-wake conversion latency,
       # so the poll-until-valid loop that used to live here is gone (ADR-021).
       - delay: 100ms
+      # INVALIDATE temp_a BEFORE REQUESTING A NEW ONE. sht3xd only *starts* the
+      # measurement in update() and publishes from a set_timeout(50ms) callback,
+      # so a stale-but-valid temp_a makes the wait_until below pass INSTANTLY —
+      # the script then races into the blocking HTTPS send inside 50 ms, the
+      # scheduler never services the callback, and the ring silently stores the
+      # PREVIOUS read. Measured 12/12 at INFO: a failed refresh was invisible and
+      # alerts were evaluated on a reading up to 35 s old.
+      #
+      # Clearing it to NaN restores the condition that already works on a real
+      # timer wake (deep sleep wipes RAM, so temp_a starts NaN there and the read
+      # lands 3/3): the guard binds, yields the loop, and the callback gets its
+      # 50 ms. This is a FIX, not just detection — it makes the read succeed. If
+      # the sensor is genuinely dead the wait still times out to NaN, which is
+      # exactly what the fault detector must latch (issue #12).
+      - lambda: 'id(temp_a).publish_state(NAN);'
       - component.update: sht30_hub   # ENV II SHT30 hub; publishes temp_a
       - component.update: dht12_hub   # ENV HAT DHT12 hub; publishes temp_b
       # AXP192 cell voltage. Reached well after axp192_init() enabled the ADCs in
@@ -511,6 +541,33 @@ script:
             lambda: 'return !std::isnan(id(temp_a).state);'
           timeout: 1s
       - delay: 20ms
+      # TEMPORARY DIAGNOSTIC PROBE — remove with the logger block.
+      # Logged at ERROR so it survives EVERY log level (the normal detector,
+      # `[D][sht3xd:076] Got temperature`, vanishes below DEBUG and would leave
+      # the low rungs of the verbosity ladder as a blind spot rather than a
+      # result). %.6f is deliberate: a bit-identical value on a session's second
+      # read is the signature of "the deferred publish never landed", which is
+      # invisible at 1 dp.
+      - lambda: |-
+          ESP_LOGE("probe", "SAMPLE temp_a=%.6f nan=%d temp_b=%.6f t=%ums",
+                   id(temp_a).state, (int) std::isnan(id(temp_a).state),
+                   id(temp_b).state, (unsigned) millis());
+      # TEMPORARY DIAGNOSTIC CAPTURE — feeds diag_footer() in report.h.
+      # Taken HERE, at the moment of the read, not at send time: by the time a
+      # message goes out the radio has been up for seconds and any rail glitch
+      # that starved temp_a would have been re-forced by the next axp192_init().
+      # Stored in RTC memory so a sampling wake's observation (no radio) survives
+      # deep sleep and reaches whichever later wake actually sends.
+      - lambda: |-
+          g_diag_rails = (int16_t) axp192_read_rails_raw();
+          g_diag_pwr   = (int16_t) axp192_read_power_status_raw();
+          g_diag_nan_a = (uint8_t) (std::isnan(id(temp_a).state) ? 1 : 0);
+          if (g_diag_nan_a) g_diag_nan_wakes++;
+          ESP_LOGE("probe", "RAILS 0x12=%d EXTEN=%d pwr=%d nan_a=%u nanwakes=%u",
+                   (int) g_diag_rails,
+                   g_diag_rails < 0 ? -1 : ((g_diag_rails & 0x40) ? 1 : 0),
+                   (int) g_diag_pwr,
+                   (unsigned) g_diag_nan_a, (unsigned) g_diag_nan_wakes);
       - lambda: |-
           uint32_t epoch = id(sntp_time).now().is_valid()
                              ? (uint32_t) id(sntp_time).now().timestamp : 0;
@@ -811,6 +868,10 @@ script:
     mode: single
     then:
       - delay: 100ms              # I²C settling margin (see wake_cycle)
+      # Invalidate before refreshing — see the long comment in wake_cycle. This
+      # path is where the defect was first measured: it reads temp_a a SECOND
+      # time in the same power session, so without this the guard is vacuous.
+      - lambda: 'id(temp_a).publish_state(NAN);'
       - component.update: sht30_hub   # ENV II SHT30 hub; publishes temp_a
       - component.update: dht12_hub   # ENV HAT DHT12 hub; publishes temp_b
       - component.update: batt_v      # AXP192 cell voltage (ADR-022)
@@ -823,6 +884,13 @@ script:
             lambda: 'return !std::isnan(id(temp_a).state);'
           timeout: 1s
       - delay: 20ms
+      # TEMPORARY DIAGNOSTIC PROBE — pairs with the one in wake_cycle so each
+      # session yields TWO comparable readings. Without this the ladder's low
+      # rungs cannot distinguish "second read went stale" from "no data".
+      - lambda: |-
+          ESP_LOGE("probe", "BOOTRD temp_a=%.6f nan=%d temp_b=%.6f t=%ums",
+                   id(temp_a).state, (int) std::isnan(id(temp_a).state),
+                   id(temp_b).state, (unsigned) millis());
       # NO screen on this path (ADR-026). Cold boot draws nothing and the TFT rails
       # are never powered here — the screen is reserved for a deliberate button
       # press, the one wake where somebody is demonstrably looking at the device.

@@ -50,6 +50,41 @@ constexpr char DEVICE_LABEL[] = "Stick C";
 // input that may contain < or >, which would 400 the send under HTML), so it
 // takes the untagged form. Passing html=true for a plain-text send would just
 // show literal "<b>" to the user; passing false for an HTML send is harmless.
+// TEMPORARY DIAGNOSTIC FOOTER (BOX SENSOR FAULT "no reading" investigation).
+// Appended to EVERY outbound message via with_device_tag(), which is the one
+// place all seven send sites funnel through — the alternative was editing each
+// http_request.post body and missing one.
+//
+// PLAIN TEXT ONLY, no tags: with_device_tag() serves both the HTML sends and the
+// plain-text command reply, and an unbalanced tag would 400 the send outright
+// (the failure mode ADR-017 already warns about). Emitting no markup is correct
+// on both paths.
+//
+// Reads only RTC state captured earlier in the wake — it must not touch the
+// PMIC here, because this runs at send time, long after the read being reported.
+// Delete this function and its call when the investigation closes.
+inline std::string diag_footer() {
+  char buf[128];
+  // A FAILED read must never render as a plausible value. Reg 0x00 = 0x00 means
+  // "no external supply present", i.e. running on the cell — the exact condition
+  // under investigation — so printing a failed read as 0x00 would manufacture
+  // the finding we are trying to test for. Same reasoning as axp192.h returning
+  // NaN rather than 0 for a failed voltage read (ADR-023).
+  char rails_s[16], pwr_s[16], exten_s[8];
+  if (g_diag_rails < 0) { snprintf(rails_s, sizeof(rails_s), "FAIL");
+                          snprintf(exten_s, sizeof(exten_s), "?"); }
+  else                  { snprintf(rails_s, sizeof(rails_s), "0x%02X", (unsigned) g_diag_rails);
+                          snprintf(exten_s, sizeof(exten_s), "%u",
+                                   (unsigned) ((g_diag_rails & 0x40) ? 1 : 0)); }
+  if (g_diag_pwr < 0)   snprintf(pwr_s, sizeof(pwr_s), "FAIL");
+  else                  snprintf(pwr_s, sizeof(pwr_s), "0x%02X", (unsigned) g_diag_pwr);
+
+  snprintf(buf, sizeof(buf), "\ndiag 0x12=%s EXTEN=%s pwr=%s nan_a=%u nanwakes=%u",
+           rails_s, exten_s, pwr_s,
+           (unsigned) g_diag_nan_a, (unsigned) g_diag_nan_wakes);
+  return std::string(buf);
+}
+
 inline std::string with_device_tag(const std::string &body, bool html = true) {
   std::string out;
   if (html) {
@@ -61,6 +96,7 @@ inline std::string with_device_tag(const std::string &body, bool html = true) {
     out += "\n";
   }
   out += body;
+  out += diag_footer();
   return out;
 }
 
