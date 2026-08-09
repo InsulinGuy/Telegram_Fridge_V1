@@ -158,6 +158,9 @@ RTC_DATA_ATTR uint16_t g_diag_retries  = 0;
 // failure is minutes later and a different power state entirely. That ambiguity
 // is what made the first captured NaN suggestive instead of conclusive.
 // -2 = "no NaN wake recorded yet", distinct from -1 = "read failed".
+// Awake-watchdog firings. Non-zero means a wake overran its ceiling and had to
+// be forced to sleep — i.e. a real hang exists somewhere in the wake paths.
+RTC_DATA_ATTR uint16_t g_diag_wdt      = 0;
 RTC_DATA_ATTR int16_t  g_nanw_rails    = -2;
 RTC_DATA_ATTR int16_t  g_nanw_pwr      = -2;
 

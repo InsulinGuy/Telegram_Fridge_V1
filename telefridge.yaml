@@ -118,6 +118,18 @@ esphome:
         # device behaves exactly like pre-settings firmware (guardrail #4). Runs
         # before the wake branch so any consumer sees live values.
         - lambda: 'settings_load();'
+        # AWAKE WATCHDOG — start it before any path that can hang.
+        # A dead box sensor takes branch combinations that normal operation never
+        # exercises, and there are six deep_sleep.prevent/enter pairs: any path
+        # that prevents sleep and then fails to reach its enter leaves the device
+        # awake indefinitely (the "won't re-sleep" gotcha in CLAUDE.md). On a
+        # 95 mAh cell that is not a missed reading, it is a flat battery and an
+        # unmonitored payload — the worst outcome this device has.
+        #
+        # This is a backstop, not a design: it must never fire in normal
+        # operation. It is deliberately NOT a fix for any specific hang, so it
+        # cannot be bypassed by fixing one and missing another.
+        - script.execute: awake_watchdog
         # Drive the deep-sleep interval from the persisted setting (issue #6),
         # not the compile-time ${sample_interval} default. set_sleep_duration()
         # takes milliseconds; runs here in on_boot (after settings_load, before
@@ -495,6 +507,31 @@ deep_sleep:
     inverted: true
 
 script:
+  # Force deep sleep if a wake has run too long, whatever it is doing.
+  # Started from on_boot on EVERY wake. The ceiling is ~3x the longest wake ever
+  # measured on this board (~40 s: boot + Wi-Fi + SNTP + send + getUpdates), so
+  # a normal cycle always reaches its own deep_sleep.enter first and this script
+  # is simply cancelled by the device sleeping.
+  #
+  # A manual deep_sleep.enter overrides an outstanding deep_sleep.prevent (same
+  # reason the settings path can force a sleep), which is what lets this recover
+  # a wake that prevented sleep and never got back to its enter. It can cut an
+  # in-flight send; at 120 s that only happens when something is already wrong,
+  # and losing one message beats never sleeping again.
+  #
+  # g_diag_wdt is reported in the diag footer: if it is ever non-zero, a real
+  # hang exists and the backstop is masking it — find the branch, don't raise
+  # the timeout.
+  - id: awake_watchdog
+    mode: single
+    then:
+      - delay: 120s
+      - lambda: |-
+          g_diag_wdt++;
+          ESP_LOGE("wdt", "AWAKE WATCHDOG fired after 120s — forcing sleep (count=%u)",
+                   (unsigned) g_diag_wdt);
+      - deep_sleep.enter: deep_sleep_1
+
   # Main wake logic: sample -> buffer -> maybe alert/report -> sleep.
   - id: wake_cycle
     mode: single

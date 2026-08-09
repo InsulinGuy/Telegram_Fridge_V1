@@ -95,10 +95,10 @@ inline std::string diag_footer() {
     snprintf(nanw_s, sizeof(nanw_s), " atnan[%s pwr=%s]", r, p);
   }
 
-  snprintf(buf, sizeof(buf), "\ndiag 0x12=%s EXTEN=%s pwr=%s nan_a=%u nanwakes=%u retries=%u%s",
+  snprintf(buf, sizeof(buf), "\ndiag 0x12=%s EXTEN=%s pwr=%s nan_a=%u nanwakes=%u retries=%u wdt=%u%s",
            rails_s, exten_s, pwr_s,
            (unsigned) g_diag_nan_a, (unsigned) g_diag_nan_wakes,
-           (unsigned) g_diag_retries, nanw_s);
+           (unsigned) g_diag_retries, (unsigned) g_diag_wdt, nanw_s);
   return std::string(buf);
 }
 
