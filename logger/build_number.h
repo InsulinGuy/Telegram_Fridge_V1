@@ -7,4 +7,4 @@
 // Value: output of `git describe --tags --always --dirty`
 // Examples: "v1.0.0"  |  "v1.0.0-3-gabcdef1"  |  "v1.0.0-3-gabcdef1-dirty"
 // Do not edit manually — the hook owns this line.
-constexpr char FW_VERSION[] = "v0.9.0-4-gfd424b3";
+constexpr char FW_VERSION[] = "v0.9.0-5-gb6bdc77-dirty";

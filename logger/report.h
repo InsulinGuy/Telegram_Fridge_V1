@@ -64,7 +64,7 @@ constexpr char DEVICE_LABEL[] = "Stick C";
 // PMIC here, because this runs at send time, long after the read being reported.
 // Delete this function and its call when the investigation closes.
 inline std::string diag_footer() {
-  char buf[128];
+  char buf[192];
   // A FAILED read must never render as a plausible value. Reg 0x00 = 0x00 means
   // "no external supply present", i.e. running on the cell — the exact condition
   // under investigation — so printing a failed read as 0x00 would manufacture
@@ -79,9 +79,26 @@ inline std::string diag_footer() {
   if (g_diag_pwr < 0)   snprintf(pwr_s, sizeof(pwr_s), "FAIL");
   else                  snprintf(pwr_s, sizeof(pwr_s), "0x%02X", (unsigned) g_diag_pwr);
 
-  snprintf(buf, sizeof(buf), "\ndiag 0x12=%s EXTEN=%s pwr=%s nan_a=%u nanwakes=%u",
+  // Conditions at the FIRST NaN wake. Omitted entirely while unset (-2) rather
+  // than printed as a placeholder: the previous footer showed "0x12=FAIL" on the
+  // boot message purely because the RTC defaults had never been populated, which
+  // read as a PMIC failure that had not happened. An absent field can't lie.
+  char nanw_s[48] = "";
+  if (g_nanw_rails != -2) {
+    char r[16], p[16];
+    if (g_nanw_rails < 0) snprintf(r, sizeof(r), "FAIL");
+    else                  snprintf(r, sizeof(r), "0x%02X/EXTEN=%u",
+                                   (unsigned) g_nanw_rails,
+                                   (unsigned) ((g_nanw_rails & 0x40) ? 1 : 0));
+    if (g_nanw_pwr < 0)   snprintf(p, sizeof(p), "FAIL");
+    else                  snprintf(p, sizeof(p), "0x%02X", (unsigned) g_nanw_pwr);
+    snprintf(nanw_s, sizeof(nanw_s), " atnan[%s pwr=%s]", r, p);
+  }
+
+  snprintf(buf, sizeof(buf), "\ndiag 0x12=%s EXTEN=%s pwr=%s nan_a=%u nanwakes=%u retries=%u%s",
            rails_s, exten_s, pwr_s,
-           (unsigned) g_diag_nan_a, (unsigned) g_diag_nan_wakes);
+           (unsigned) g_diag_nan_a, (unsigned) g_diag_nan_wakes,
+           (unsigned) g_diag_retries, nanw_s);
   return std::string(buf);
 }
 
@@ -322,8 +339,15 @@ inline std::string build_time_iso() {
 inline std::string build_boot_msg(float ta, float tb, int rssi, uint32_t uptime_s,
                                   uint32_t now_epoch, uint32_t report_interval_min,
                                   float batt_v, float batt_pct) {
-  AlertState sa = alert_state_live(ta, /*is_box=*/true);   // live bands (issue #50)
-  AlertState sb = alert_state_live(tb, /*is_box=*/false);
+  // FAULT-AWARE, like build_report() (ADR-017). alert_state*() is pure and
+  // returns ALERT_OK for NaN by design, so a boot with no box reading used to
+  // announce "Box nan° OK" — the message asserting the payload is fine at the
+  // exact moment it has no idea. Observed in the field. Checked here on the
+  // value itself rather than via sensor_faulted(), because the boot message is
+  // built before faults_observe() has run for this wake.
+  const bool fault_a = std::isnan(ta), fault_b = std::isnan(tb);
+  AlertState sa = fault_a ? ALERT_SENSOR_FAULT : alert_state_live(ta, /*is_box=*/true);
+  AlertState sb = fault_b ? ALERT_SENSOR_FAULT : alert_state_live(tb, /*is_box=*/false);
   // Headline glyph tracks the box zone (temp_a, the ADR-011 authority) — a boot
   // with an already-warm box must not announce itself green (issue #2).
   std::string out = std::string(zone_emoji(sa)) + " <b>TeleFridge ";
@@ -334,8 +358,11 @@ inline std::string build_boot_msg(float ta, float tb, int rssi, uint32_t uptime_
   // Temp / Zone table (zone last so a multi-word label can't break alignment).
   char h[48], rA[64], rB[64];
   snprintf(h,  sizeof(h),  "%-6s %6s  %s", "", "Temp", "Zone");
-  snprintf(rA, sizeof(rA), "%-6s %5.1f\xC2\xB0 %s", "Box",    ta, alert_label(sa));
-  snprintf(rB, sizeof(rB), "%-6s %5.1f\xC2\xB0 %s", "Fridge", tb, alert_label(sb));
+  // "-" rather than the literal "nan" glibc prints for a missing reading.
+  if (fault_a) snprintf(rA, sizeof(rA), "%-6s %5s  %s", "Box",    "-", alert_label(sa));
+  else         snprintf(rA, sizeof(rA), "%-6s %5.1f\xC2\xB0 %s", "Box",    ta, alert_label(sa));
+  if (fault_b) snprintf(rB, sizeof(rB), "%-6s %5s  %s", "Fridge", "-", alert_label(sb));
+  else         snprintf(rB, sizeof(rB), "%-6s %5.1f\xC2\xB0 %s", "Fridge", tb, alert_label(sb));
   out += "<pre>"; out += h; out += "\n"; out += rA; out += "\n"; out += rB; out += "</pre>\n";
   out += batt_str(batt_v, batt_pct) + "\n";
   // Diagnostics.
