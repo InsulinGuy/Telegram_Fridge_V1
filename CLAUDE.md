@@ -911,6 +911,14 @@ sampling-wake invariant — see Open items). New assets: `spi:`/`display:`/`font
 
 ## Open items to finalise on the physical build
 
+### Fridge validation — cold CRIT path confirmed (2026-08-09)
+
+Box reached 1.9 °C in a real fridge: `ALERT_CRIT_LOW` fired an early Wi-Fi alert
+at the right bound, rendered 🟦 `TOO COLD` + `limit 2.0°C` + battery/clock
+footer, and fired **once** (hold-off armed on send-ack). Both halves of the
+2–8 °C compliance window have now fired on hardware. A sustained multi-day soak
+is still outstanding.
+
 ### Box sensor NaN — OPEN, root cause unidentified (v0.9.1)
 
 `temp_a` intermittently reads NaN. Two consecutive NaN wakes latch
@@ -929,6 +937,11 @@ mitigated.** What the evidence rules in and out:
 - **Mitigation shipped:** one guarded retry (3 s) in `wake_cycle`. It has
   **never fired in the wild** — the failure is rare (one occurrence in ~24 h;
   zero in ~100 overnight wakes).
+
+**Soak evidence so far (2026-08-09):** an extended fridge run on the cell —
+`nanwakes=0 retries=0 wdt=0`, `EXTEN=1`, `pwr=0x01` throughout. No NaN, so the
+retry has still never fired. Counters accumulate across the soak; a reflash
+resets them.
 
 **To close this:** set `DIAG_ENABLED = true` and watch the footer. `retries=`
 climbing with `nanwakes=0` means the retry is catching real transient failures
@@ -981,10 +994,10 @@ is the load-bearing one: it is the invariant the whole power argument rests on.
       and twice after. Log shows `wakeup_cause=2 button=1`, a 3.05–3.24 s gap
       between the sensor read and `wifi.enable` (the screen holding), then a
       delivered Telegram report and a clean sleep.
-- [ ] **3. An unattended wake NEVER lights the panel.** The 15-min sampling wake
-      is the case to watch (`/set sample_interval_min 1` compresses it); the 4-h
-      report wake and cold boot take the same path. Cold boot is now easy to check
-      directly — power-cycle and confirm the panel stays black.
+- [x] **3. An unattended wake NEVER lights the panel (2026-08-09)** — proven by
+      reg 0x12 readback, not by eye: every sampling/report wake reads `0x53`
+      (LDO2/LDO3 clear), the button wake reads `0x5F` (`0x53 | 0x0C` — exactly
+      `axp192_lcd_on_target()`), with EXTEN and DC-DC1 preserved in both.
 - [x] **4. Recovers from an interrupted screen (2026-08-05)** — RESET pressed
       during the live 3 s screen; the panel ended up dark. This is the failure the
       `on_shutdown` hook exists for, and the one that would otherwise flatten the
@@ -997,16 +1010,16 @@ is the load-bearing one: it is the invariant the whole power argument rests on.
       rail power, so an immediately-black panel is the image clearing, not the
       rails dropping. Worth re-checking with that distinction in mind if the power
       budget ever looks wrong.
-- [ ] **5. Screen and Telegram agree on a real zone** — chill the box below 2 °C:
-      the panel must show **blue** `BOX TOO COLD` while the message shows 🟦. The
-      host test pins the tables to each other; only hardware pins them to reality.
+- [x] **5. Screen and Telegram agree on a real zone (2026-08-09)** — box at
+      1.9 °C in the fridge: panel blue `BOX TOO COLD`, message 🟦 `Box TOO COLD —
+      1.9°C / limit 2.0°C`. Alert fired ONCE (send-ack hold-off, ADR-018).
 - [ ] **6. Average-current comparison, before vs after.** Partly answered: the
       display component's setup is **901 ms on every wake** (measured 2026-08-05),
       against an unpowered panel, ~96 times a day. That is the real residual cost
       and it is not zero. What is still missing is what it costs in mA·h — measure
       and fold into ADR-022, then decide whether it justifies dropping the ESPHome
       `display:` component for direct ST7735 control.
-- [ ] **7. `AXP192_LDO23_3V0` (reg 0x28 = `0xCC`, 3.0 V both rails)** is the one
+- [x] **7. `AXP192_LDO23_3V0` (reg 0x28 = `0xCC`) confirmed (2026-08-09)** — panel legible, backlight not over-driven. Original note: it was the one
       unvalidated register write in the change — confirm the panel is legible and
       the backlight isn't over-driven.
 
