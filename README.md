@@ -41,12 +41,22 @@ See [`DISCLAIMER.md`](./DISCLAIMER.md) for the full details.
   lights up for 3 seconds with the current status, and it sends you a report
   straight away.
 
+<img src="./docs/img/photo-device-on-box.jpeg" alt="TeleFridge sitting on the lid of a sealed box of insulin, its sensor cable passing through the lid" width="420">
+
+*The whole idea: your insulin in a sealed, insulated box, with a sensor inside it
+and the device on the lid.*
+
 ## How the alerting works
 
 TeleFridge puts your insulin in a small **insulated box** inside the fridge, and
 watches it with two temperature sensors: one **inside the box** (the reading that
 actually matters) and one in the **fridge air** around it (to spot trouble — a
 door left open, a failing fridge — before it reaches the box).
+
+<img src="./docs/img/photo-box-sensor.jpeg" alt="Close-up of the box sensor on its cable, resting above the insulin inside the box" width="420">
+
+*The sensor that goes inside the box — the reading your insulin actually
+experiences, and the one the 2–8 °C limits are judged against.*
 
 Each time it wakes up, it decides what to do:
 
@@ -133,7 +143,8 @@ silly value is politely refused rather than accepted.
 ## What you'll see
 
 A tidy status message every few hours, and an immediate message if something is
-wrong. *(Illustrative mockups — real photos coming soon.)*
+wrong. *(The Telegram examples below are illustrative mockups; the device photos
+are real.)*
 
 **Routine check-in (every 4 hours):**
 
@@ -148,6 +159,10 @@ and it wakes for 3 seconds, showing the verdict (colour-coded the same way as th
 messages), both temperatures and the battery — then goes dark again and sends you
 a report. A button press is designed to be the *only* thing that lights it: the
 routine 15-minute and 4-hour wake-ups are meant to stay dark.
+
+<img src="./docs/img/photo-screen-alert.jpeg" alt="The device screen lit blue, reading BOX TOO WARM with box 23.8 °C, fridge 21.0 °C and battery 82%" width="520">
+
+*The 3-second screen, mid-alert: the verdict first, then the numbers behind it.*
 
 > 🔬 The "dark on every routine wake" behaviour is confirmed by design and by the
 > project's own tests, but **has not yet been signed off on real hardware over a
@@ -202,6 +217,11 @@ routine 15-minute and 4-hour wake-ups are meant to stay dark.
    with ESPHome. You should get a "hello" message on Telegram.
 5. **Place it** — put the box sensor inside your insulated box, the box in the
    fridge, and let TeleFridge start its check-ins.
+
+   <img src="./docs/img/photo-in-fridge.jpeg" alt="The insulated box with TeleFridge on its lid, on a fridge shelf beside ordinary food" width="420">
+
+   *Where it lives. The screen is dark because nobody pressed the button — that
+   is the normal state.*
 
 ## This is V1 — a bigger, simpler V2 is coming
 
