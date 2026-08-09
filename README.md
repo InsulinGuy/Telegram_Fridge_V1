@@ -270,7 +270,7 @@ just a patch.
 
 ## Thanks
 
-This project exists to a great extend thanks to [@irascible](https://github.com/irascible).
+This project exists to a great extent thanks to [@irascible](https://github.com/irascible).
 
 He taught me how to use GitHub, how to organise a software project, and what
 unit and regression tests are actually for. Working with him reminded me what it means to have high
