@@ -577,6 +577,43 @@ script:
           condition:
             lambda: 'return !std::isnan(id(temp_a).state);'
           timeout: 1s
+      # ONE MORE ATTEMPT AT THE BOX READ, THEN LET IT BE A FAULT.
+      #
+      # Exactly one retry, with a longer window than the first wait — no loop.
+      # An earlier version used `repeat: count: 2` WITHOUT the is_failed() guard
+      # below and boot-looped the device every ~10 s with the sensor unplugged,
+      # flooding Telegram with cold-boot messages (reverted in 92e0185).
+      #
+      # THE GUARD IS THE WHOLE DESIGN. sht3xd calls mark_failed() during SETUP
+      # when the sensor does not answer at all ("Failed to set heater mode"),
+      # and ESPHome never calls update() on a failed component — so retrying an
+      # ABSENT sensor can never succeed and only spins the loop. A TRANSIENT
+      # read failure is different: it sets a warning, not a failure, and leaves
+      # the component live. is_failed() separates the two exactly: retry the
+      # case that can recover, skip the case that cannot.
+      #
+      # 3 s (vs 1 s) because this only runs after a read has ALREADY failed, so
+      # it costs nothing on the healthy path and there is no reason to be stingy
+      # inside a 15-minute wake. The 120 s awake watchdog bounds it regardless.
+      #
+      # If this attempt also fails, temp_a stays NaN, the wake continues and
+      # sleeps normally, and the sample is recorded as NaN — which is what the
+      # fault detector consumes. BOX SENSOR FAULT still needs FAULT_CONSEC_N (2)
+      # consecutive NaN wakes, so one bad wake is a gap in the digest, not an
+      # alert.
+      - if:
+          condition:
+            lambda: 'return std::isnan(id(temp_a).state) && !id(sht30_hub)->is_failed();'
+          then:
+            - lambda: |-
+                g_diag_retries++;
+                ESP_LOGE("probe", "box read NaN - one retry (total=%u)",
+                         (unsigned) g_diag_retries);
+            - component.update: sht30_hub
+            - wait_until:
+                condition:
+                  lambda: 'return !std::isnan(id(temp_a).state);'
+                timeout: 3s
       - delay: 20ms
       # TEMPORARY DIAGNOSTIC PROBE — remove with the logger block.
       # Logged at ERROR so it survives EVERY log level (the normal detector,
