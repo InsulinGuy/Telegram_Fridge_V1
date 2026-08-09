@@ -249,6 +249,35 @@ static inline bool axp192_read_reg(uint8_t reg, uint8_t *out) {
   return ok;
 }
 
+// TEMPORARY DIAGNOSTIC (BOX SENSOR FAULT "no reading" investigation).
+// Read register 0x12 back as-is, for reporting rather than control. Returns the
+// raw byte, or -1 if the bit-banged read failed — the caller must distinguish
+// those, because "could not read the PMIC" and "rails are off" are different
+// findings and 0x00 is a plausible-looking lie for both. Deliberately does NOT
+// apply axp192_rails_plausible(): that guard exists to stop a corrupt read being
+// WRITTEN back, whereas here an implausible value is itself the evidence.
+static inline int axp192_read_rails_raw() {
+  uint8_t rails = 0;
+  if (!axp192_read_reg(AXP192_REG_DCDC_LDO_EN, &rails))
+    return -1;
+  return (int) rails;
+}
+
+// TEMPORARY DIAGNOSTIC: register 0x00, the PMIC's input-power status (VBUS/ACIN
+// presence, and which source is actually supplying the board). Read alongside
+// 0x12 because the two answer DIFFERENT questions, and the difference is the
+// whole investigation: 0x12 says whether we ASKED for the Grove 5 V boost,
+// 0x00 says what the PMIC is actually doing. A cell sagging under boost load
+// can leave EXTEN set in 0x12 while the boost itself is down — which would look
+// like a healthy register and a dead sensor, exactly the observed symptom.
+// Returns the raw byte, or -1 if the read failed.
+static inline int axp192_read_power_status_raw() {
+  uint8_t st = 0;
+  if (!axp192_read_reg(0x00, &st))
+    return -1;
+  return (int) st;
+}
+
 // Pure: what register 0x12 should become at init, given what it currently reads.
 // Grove 5 V boost on (temp_a hangs off it); the TFT rails (LDO2/LDO3) are left
 // exactly as found (ADR-026 — driven separately by axp192_lcd_on/off()), as is

@@ -132,6 +132,38 @@ RTC_DATA_ATTR uint16_t g_stale_run_b  = 0;
 RTC_DATA_ATTR bool g_fault_latch_a = false;
 RTC_DATA_ATTR bool g_fault_latch_b = false;
 
+// --- TEMPORARY DIAGNOSTIC STATE (BOX SENSOR FAULT "no reading") -------------
+// Captured in wake_cycle at the moment of the read, carried in RTC memory to
+// whichever send happens later (a sampling wake has no radio, so the wake that
+// observes a fault is usually NOT the wake that reports it), and rendered by
+// with_device_tag(). Remove with the rest of the diagnostic scaffolding.
+//
+// Discriminator: nan_a=1 with EXTEN=0 means the Grove 5 V boost — temp_a's only
+// supply — was down, which is the ADR-026 rail-ownership theory and the one
+// mechanism that explains a replacement sensor and a new cable both failing.
+// nan_a=1 with EXTEN=1 exonerates the rail and points at the bus or at the
+// sht3xd deferred-publish path instead.
+RTC_DATA_ATTR int16_t  g_diag_rails    = -1;  // raw reg 0x12, or -1 = read failed
+RTC_DATA_ATTR uint8_t  g_diag_nan_a    = 0;   // was temp_a NaN at ring_push time
+RTC_DATA_ATTR uint16_t g_diag_nan_wakes = 0;  // cumulative wakes seen with NaN temp_a
+RTC_DATA_ATTR int16_t  g_diag_pwr      = -1;  // raw reg 0x00 (input power status), or -1
+// Box-read retries (see wake_cycle). Cumulative: a non-zero count means the
+// first attempt failed and the retry path ran — the number that says whether
+// transient I2C failures are happening at all, and how often, even when the
+// retry succeeded and nothing else in the report looks unusual.
+RTC_DATA_ATTR uint16_t g_diag_retries  = 0;
+// Conditions LATCHED AT THE FIRST NaN WAKE, never overwritten afterwards.
+// The g_diag_rails/g_diag_pwr above are rewritten every wake, so a report only
+// ever showed the rail state of the SENDING wake — which for a sampling-wake
+// failure is minutes later and a different power state entirely. That ambiguity
+// is what made the first captured NaN suggestive instead of conclusive.
+// -2 = "no NaN wake recorded yet", distinct from -1 = "read failed".
+// Awake-watchdog firings. Non-zero means a wake overran its ceiling and had to
+// be forced to sleep — i.e. a real hang exists somewhere in the wake paths.
+RTC_DATA_ATTR uint16_t g_diag_wdt      = 0;
+RTC_DATA_ATTR int16_t  g_nanw_rails    = -2;
+RTC_DATA_ATTR int16_t  g_nanw_pwr      = -2;
+
 // Append a sample (overwrites oldest when full).
 inline void ring_push(uint32_t epoch, float a, float b) {
   g_ring[g_ring_head] = Sample{epoch, a, b};
@@ -172,16 +204,31 @@ inline Digest ring_summary() {
     d.cur_a = d.cur_b = std::nanf("");
     return d;
   }
+  // SKIP NaN SAMPLES IN THE AGGREGATES, per sensor and independently.
+  // Previously min/max seeded from g_ring[0] and compared with </>, which are
+  // ALWAYS false against NaN, and the mean summed NaN outright — so a SINGLE
+  // failed read turned min/max/mean into NaN for the whole window and the report
+  // rendered "-  -  -". Observed in the field: 15 good samples discarded by one
+  // bad one, on the sensor that is the compliance authority. The count of good
+  // samples is tracked per sensor so one sensor's gap cannot skew the other's
+  // mean. `n` still reports samples TAKEN; a NaN remains visible as a failed
+  // read via the fault detector, which is where that signal belongs.
   double sa = 0, sb = 0;
-  d.min_a = d.max_a = g_ring[0].temp_a;
-  d.min_b = d.max_b = g_ring[0].temp_b;
+  uint16_t na = 0, nb = 0;
+  d.min_a = d.max_a = d.mean_a = std::nanf("");
+  d.min_b = d.max_b = d.mean_b = std::nanf("");
   for (uint16_t i = 0; i < g_ring_count; i++) {
     float a = g_ring[i].temp_a, b = g_ring[i].temp_b;
-    sa += a; sb += b;
-    if (a < d.min_a) d.min_a = a;
-    if (a > d.max_a) d.max_a = a;
-    if (b < d.min_b) d.min_b = b;
-    if (b > d.max_b) d.max_b = b;
+    if (!std::isnan(a)) {
+      sa += a; na++;
+      if (na == 1 || a < d.min_a) d.min_a = a;
+      if (na == 1 || a > d.max_a) d.max_a = a;
+    }
+    if (!std::isnan(b)) {
+      sb += b; nb++;
+      if (nb == 1 || b < d.min_b) d.min_b = b;
+      if (nb == 1 || b > d.max_b) d.max_b = b;
+    }
     if (alert_state(a, /*is_box=*/true)  != ALERT_OK) d.n_out_a++;
     if (alert_state(b, /*is_box=*/false) != ALERT_OK) d.n_out_b++;
     // Window bounds by min/max over valid epochs. Index order is NOT time order
@@ -192,8 +239,12 @@ inline Digest ring_summary() {
       if (e > d.last_epoch) d.last_epoch = e;
     }
   }
-  d.mean_a = (float)(sa / g_ring_count);
-  d.mean_b = (float)(sb / g_ring_count);
+  // Divide by the GOOD-sample count, not g_ring_count: dividing a NaN-free sum
+  // by a total that includes failed reads would silently bias the mean low.
+  // Stays NaN when a sensor produced no valid sample at all, which is correct —
+  // there is no average of nothing, and the fault detector reports the why.
+  if (na > 0) d.mean_a = (float)(sa / na);
+  if (nb > 0) d.mean_b = (float)(sb / nb);
   const Sample &last = ring_latest();
   d.cur_a = last.temp_a;
   d.cur_b = last.temp_b;

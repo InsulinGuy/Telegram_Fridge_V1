@@ -109,6 +109,61 @@ static int test_wraparound() {
   return 0;
 }
 
+// A single failed read must not destroy the window's statistics. Before this
+// was fixed, min/max seeded from g_ring[0] and compared with </> (always false
+// against NaN) and the mean summed NaN outright, so ONE NaN sample rendered
+// min/max/mean as "-" for the entire 4 h digest. Seen in the field: 15 good box
+// samples discarded because of one bad one, on the compliance sensor.
+static int test_summary_skips_nan() {
+  reset_state();
+  const float nan_v = std::nanf("");
+  ring_push(100, 5.0f, 10.0f);
+  ring_push(200, nan_v, 12.0f);      // failed box read, fridge fine
+  ring_push(300, 7.0f, 14.0f);
+  Digest d = ring_summary();
+  CHECK(d.n == 3);                   // n counts samples TAKEN, including failed
+  CHECK(near(d.min_a, 5.0f));        // aggregates ignore the NaN entirely
+  CHECK(near(d.max_a, 7.0f));
+  CHECK(near(d.mean_a, 6.0f));       // (5+7)/2 — divided by GOOD count, not 3
+  CHECK(near(d.min_b, 10.0f));       // the other sensor is unaffected
+  CHECK(near(d.max_b, 14.0f));
+  CHECK(near(d.mean_b, 12.0f));
+  return 0;
+}
+
+// NaN in the FIRST slot is the case the old seeding got wrong: min/max were
+// initialised from it and every later comparison against NaN was false, so they
+// stayed NaN no matter how many good samples followed.
+static int test_summary_nan_first_slot() {
+  reset_state();
+  const float nan_v = std::nanf("");
+  ring_push(100, nan_v, nan_v);
+  ring_push(200, 4.0f, 20.0f);
+  ring_push(300, 6.0f, 22.0f);
+  Digest d = ring_summary();
+  CHECK(near(d.min_a, 4.0f));
+  CHECK(near(d.max_a, 6.0f));
+  CHECK(near(d.mean_a, 5.0f));
+  CHECK(near(d.min_b, 20.0f));
+  CHECK(near(d.max_b, 22.0f));
+  return 0;
+}
+
+// All-NaN must stay NaN: there is no average of nothing, and inventing one
+// would let a totally dead sensor report a plausible number.
+static int test_summary_all_nan() {
+  reset_state();
+  const float nan_v = std::nanf("");
+  ring_push(100, nan_v, 9.0f);
+  ring_push(200, nan_v, 9.0f);
+  Digest d = ring_summary();
+  CHECK(std::isnan(d.min_a));
+  CHECK(std::isnan(d.max_a));
+  CHECK(std::isnan(d.mean_a));
+  CHECK(near(d.mean_b, 9.0f));       // healthy sensor still reports
+  return 0;
+}
+
 static int test_fridge_ema() {
   reset_state();
   CHECK(std::isnan(fridge_ema()));        // empty -> NaN
@@ -286,6 +341,9 @@ int main() {
   rc |= test_push_and_summary();
   rc |= test_clear();
   rc |= test_wraparound();
+  rc |= test_summary_skips_nan();
+  rc |= test_summary_nan_first_slot();
+  rc |= test_summary_all_nan();
   rc |= test_fridge_ema();
   rc |= test_fridge_hist_wrap();
   rc |= test_predict_debounce();

@@ -5,7 +5,8 @@
 # NOT a medical device — see DISCLAIMER.md. See LICENSE for the full terms.
 """Reset the ESP32 via RTS and capture serial output from t=0.
 
-Usage: capture_boot.py [seconds] [port]   (default 120s, port auto-detected)
+Usage: capture_boot.py [seconds] [port] [baud]
+       (default 120s, port auto-detected, 115200 baud)
 
 A general hardware bring-up aid, not tied to any one investigation: it is the
 tool for watching a wake cycle end-to-end, and for the open bring-up items
@@ -31,9 +32,12 @@ def default_port():
 
 DURATION = float(sys.argv[1]) if len(sys.argv) > 1 else 120.0
 PORT = sys.argv[2] if len(sys.argv) > 2 else default_port()
-print("capturing %.0fs from %s" % (DURATION, PORT), file=sys.stderr)
+# Must match `logger: baud_rate:` in telefridge.yaml — a mismatch yields garbage,
+# not silence. ESPHome's own default is 115200.
+BAUD = int(sys.argv[3]) if len(sys.argv) > 3 else 115200
+print("capturing %.0fs from %s at %d baud" % (DURATION, PORT, BAUD), file=sys.stderr)
 
-ser = serial.Serial(PORT, 115200, timeout=1)
+ser = serial.Serial(PORT, BAUD, timeout=1)
 # Auto-reset circuit: RTS drives EN (with DTR low so IO0 stays high -> normal boot).
 ser.dtr = False
 ser.rts = True
