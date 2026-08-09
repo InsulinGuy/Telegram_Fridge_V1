@@ -50,7 +50,12 @@ constexpr char DEVICE_LABEL[] = "Stick C";
 // input that may contain < or >, which would 400 the send under HTML), so it
 // takes the untagged form. Passing html=true for a plain-text send would just
 // show literal "<b>" to the user; passing false for an HTML send is harmless.
-// TEMPORARY DIAGNOSTIC FOOTER (BOX SENSOR FAULT "no reading" investigation).
+// OPT-IN DIAGNOSTIC FOOTER — gated by DIAG_ENABLED in helpers.h, OFF by default.
+// Built for the unresolved BOX SENSOR FAULT ("no reading") investigation and
+// kept rather than deleted, because the failure is intermittent enough that the
+// next occurrence may be weeks away and re-deriving this costs more than the
+// dead code does.
+//
 // Appended to EVERY outbound message via with_device_tag(), which is the one
 // place all seven send sites funnel through — the alternative was editing each
 // http_request.post body and missing one.
@@ -113,7 +118,7 @@ inline std::string with_device_tag(const std::string &body, bool html = true) {
     out += "\n";
   }
   out += body;
-  out += diag_footer();
+  if (DIAG_ENABLED) out += diag_footer();   // off in releases
   return out;
 }
 

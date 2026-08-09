@@ -607,8 +607,9 @@ script:
           then:
             - lambda: |-
                 g_diag_retries++;
-                ESP_LOGE("probe", "box read NaN - one retry (total=%u)",
-                         (unsigned) g_diag_retries);
+                if (DIAG_ENABLED)
+                  ESP_LOGE("probe", "box read NaN - one retry (total=%u)",
+                           (unsigned) g_diag_retries);
             - component.update: sht30_hub
             - wait_until:
                 condition:
@@ -623,9 +624,10 @@ script:
       # read is the signature of "the deferred publish never landed", which is
       # invisible at 1 dp.
       - lambda: |-
-          ESP_LOGE("probe", "SAMPLE temp_a=%.6f nan=%d temp_b=%.6f t=%ums",
-                   id(temp_a).state, (int) std::isnan(id(temp_a).state),
-                   id(temp_b).state, (unsigned) millis());
+          if (DIAG_ENABLED)
+            ESP_LOGE("probe", "SAMPLE temp_a=%.6f nan=%d temp_b=%.6f t=%ums",
+                     id(temp_a).state, (int) std::isnan(id(temp_a).state),
+                     id(temp_b).state, (unsigned) millis());
       # TEMPORARY DIAGNOSTIC CAPTURE — feeds diag_footer() in report.h.
       # Taken HERE, at the moment of the read, not at send time: by the time a
       # message goes out the radio has been up for seconds and any rail glitch
@@ -645,7 +647,8 @@ script:
               g_nanw_pwr   = g_diag_pwr;
             }
           }
-          ESP_LOGE("probe", "RAILS 0x12=%d EXTEN=%d pwr=%d nan_a=%u nanwakes=%u",
+          if (DIAG_ENABLED)
+            ESP_LOGE("probe", "RAILS 0x12=%d EXTEN=%d pwr=%d nan_a=%u nanwakes=%u",
                    (int) g_diag_rails,
                    g_diag_rails < 0 ? -1 : ((g_diag_rails & 0x40) ? 1 : 0),
                    (int) g_diag_pwr,
@@ -970,9 +973,10 @@ script:
       # session yields TWO comparable readings. Without this the ladder's low
       # rungs cannot distinguish "second read went stale" from "no data".
       - lambda: |-
-          ESP_LOGE("probe", "BOOTRD temp_a=%.6f nan=%d temp_b=%.6f t=%ums",
-                   id(temp_a).state, (int) std::isnan(id(temp_a).state),
-                   id(temp_b).state, (unsigned) millis());
+          if (DIAG_ENABLED)
+            ESP_LOGE("probe", "BOOTRD temp_a=%.6f nan=%d temp_b=%.6f t=%ums",
+                     id(temp_a).state, (int) std::isnan(id(temp_a).state),
+                     id(temp_b).state, (unsigned) millis());
       # NO screen on this path (ADR-026). Cold boot draws nothing and the TFT rails
       # are never powered here — the screen is reserved for a deliberate button
       # press, the one wake where somebody is demonstrably looking at the device.

@@ -60,6 +60,19 @@ constexpr float THRESH_FRIDGE_CRIT_HIGH = 9.0f;
 //   it is kept for the DHT12 because a hard 0.00 surviving wake_cycle's
 //   poll-until-valid loop is a genuine fault from any part on that bus.
 constexpr uint16_t FAULT_CONSEC_N  = 2;
+
+// --- Diagnostic instrumentation switch --------------------------------------
+// ONE flag for all of it: the `diag ...` footer appended to every Telegram
+// message, and the ERROR-level serial probes in wake_cycle. OFF for releases —
+// the footer prints raw AXP192 register values into every alert, which is noise
+// for anyone who is not currently debugging this device, and the probes log at
+// ERROR so no log level suppresses them.
+//
+// Set true when investigating a sensor fault; it surfaces retries / nanwakes /
+// wdt counters and the rail state latched at the first NaN wake. The counters
+// themselves are always maintained in RTC memory regardless of this flag, so
+// enabling it does not start the history from scratch.
+constexpr bool DIAG_ENABLED = false;
 constexpr uint16_t STALE_SAMPLES_M = 8;
 constexpr float    STUCK_TEMP_B    = 0.0f;
 

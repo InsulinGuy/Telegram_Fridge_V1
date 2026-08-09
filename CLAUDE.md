@@ -635,6 +635,11 @@ telefridge_StickC_V1/         ← published on GitHub as Telegram_Fridge_V1
 | Device boot-loops after flash | A `psram:` block — the PICO-D4 has none | Remove it entirely |
 | Device won't re-sleep after report | `deep_sleep.prevent` left set / no completion path | `deep_sleep.enter` on `on_response` **and** on a send timeout |
 | Flash wears out over time | Ring buffer moved to `globals restore_value: true` (NVS) | Keep the buffer in RTC memory (`RTC_DATA_ATTR`), not NVS |
+| **Box reads NaN once in a while (`temp_a`), no pattern** | A single failed I²C transaction on `bus_box`. `sht3xd` makes ONE attempt per `update()` and returns without publishing on failure | `wake_cycle` retries once (3 s window) when `temp_a` is NaN **and** the component is not `is_failed()`. Root cause still unidentified — see Open items |
+| **Device boot-loops with the box sensor unplugged** | Retrying `component.update:` on a component ESPHome marked FAILED at setup. A failed component never gets `update()` called, so the retry spins the main loop into a watchdog reset — and every cold boot sends a Telegram boot message | The retry is guarded by `!id(sht30_hub)->is_failed()`. **Never retry a sensor read without that guard** |
+| **Every message ends in `diag 0x12=... EXTEN=...`** | `DIAG_ENABLED` is true in `helpers.h` | Set it false (the release default). It gates the footer *and* the ERROR-level serial probes together |
+| **`temp_a` silently stale — report shows a reading minutes old** | `wait_until !isnan(temp_a)` is vacuous when `temp_a` already holds a value: it passes instantly and the deferred `sht3xd` publish never lands before the blocking send | `id(temp_a).publish_state(NAN);` before every `component.update: sht30_hub`, forcing the guard to bind |
+| **Serial attach destroys the state you wanted to inspect** | Opening the port resets the ESP32 on this hardware, even with `HUPCL` cleared — measured, bootloader output at t=0.02 s | Do not attach to a hung/faulted device. Read the RTC counters via the Telegram diag footer instead (`scripts/attach_serial.py` documents this) |
 | Predictor fires nuisance alerts during compressor cycles | `PREDICT_SMOOTH_N` too small — the fridge EMA follows the cycle | Increase `PREDICT_SMOOTH_N` (default 4 = 60 min) |
 | Predictor never fires, or fires far too early | `TAU_BOX_MIN` mis-set (still the placeholder, or wrong after a box change), or `PREDICT_HORIZON` off | Re-run the τ_box fit and pin `TAU_BOX_MIN`; sanity-check `PREDICT_HORIZON` against τ |
 
@@ -905,6 +910,47 @@ sampling-wake invariant — see Open items). New assets: `spi:`/`display:`/`font
 ---
 
 ## Open items to finalise on the physical build
+
+### Box sensor NaN — OPEN, root cause unidentified (v0.9.1)
+
+`temp_a` intermittently reads NaN. Two consecutive NaN wakes latch
+`BOX SENSOR FAULT — no reading`, which is what the owner sees. **Not solved —
+mitigated.** What the evidence rules in and out:
+
+- **Not the battery / 5 V boost.** An overnight fridge run on the cell drained
+  to 3.32 V / 5% with `EXTEN=1` and **zero** NaN wakes. The only NaN ever
+  captured happened on *external* power, at room temperature.
+- **Not the sensor or the cable.** Both were replaced; it recurred.
+- **Not a scheduling race.** The `wait_until` guard gives the deferred publish a
+  full second, and on a real timer wake `temp_a` starts NaN so the guard binds.
+- **Working theory:** a single failed I²C transaction on `bus_box`. `sht3xd`
+  makes exactly one attempt per `update()` and returns without publishing, so
+  one NACK costs the whole sample.
+- **Mitigation shipped:** one guarded retry (3 s) in `wake_cycle`. It has
+  **never fired in the wild** — the failure is rare (one occurrence in ~24 h;
+  zero in ~100 overnight wakes).
+
+**To close this:** set `DIAG_ENABLED = true` and watch the footer. `retries=`
+climbing with `nanwakes=0` means the retry is catching real transient failures
+and the mitigation works. `nanwakes=` climbing alongside means they are not
+transient and the theory is wrong. `atnan[...]` reports the rail state latched
+at the first NaN wake.
+
+### Awake watchdog — a backstop, not a fix
+
+A 120 s ceiling forces `deep_sleep.enter` however a wake is stuck (`wdt=` in the
+diag footer counts firings). Verified on hardware by shortening it to 15 s: it
+fired mid-wake over a held `deep_sleep.prevent`. **It does not bound a boot
+loop** — each reset restarts the timer. Non-zero `wdt=` means a real hang exists
+and this is masking it: find the branch, do not raise the timeout.
+
+### Battery runtime is ~half a day, not "days" (ADR-022 needs revising)
+
+Measured overnight at the 15-min cadence: roughly **9 percentage points/hour**,
+4.08 V → 3.32 V / 5% in about 13 hours. ADR-022's "days, not months" is
+optimistic by an order of magnitude. First suspect is the display component's
+**901 ms setup on every wake** against an unpowered panel (ADR-026 item 6).
+
 
 Single source of truth for implementation + bring-up status.
 
