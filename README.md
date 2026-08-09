@@ -8,8 +8,13 @@
 **A tiny, battery-powered gadget that watches your fridge and messages you on
 Telegram if your insulin gets too warm or too cold.**
 
+[![Latest release](https://img.shields.io/github/v/release/InsulinGuy/Telegram_Fridge_V1)](https://github.com/InsulinGuy/Telegram_Fridge_V1/releases/latest)
 ![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 ![Not a medical device](https://img.shields.io/badge/⚠️-not%20a%20medical%20device-red)
+
+This page describes the [latest release](https://github.com/InsulinGuy/Telegram_Fridge_V1/releases/latest).
+Its release notes list what changed and what is still known-broken — worth reading
+before you rely on it.
 
 ---
 
@@ -80,6 +85,10 @@ quiet without telling you first.
 
 Only the *box* nags: while the box stays critical it keeps reminding you. A fridge
 problem speaks once, so a noisy appliance can't drown out the reading that matters.
+
+> ✅ Both ends of the safe range have now fired on real hardware in a fridge: a
+> box at 1.9 °C raised the cold alert at the 2.0 °C limit, matching on the screen
+> and in Telegram, and alerted once rather than repeating.
 
 > ⚠️ The "early warning" prediction ships **uncalibrated**. It estimates how fast
 > your box warms up using a constant (`TAU_BOX_MIN`) that has to be measured
@@ -168,10 +177,11 @@ routine 15-minute and 4-hour wake-ups are meant to stay dark.
    that tells the bot who to message). Full walkthrough:
    [How do I create a bot?](https://core.telegram.org/bots#how-do-i-create-a-bot)
 3. **Add your details** — copy `secrets.yaml.example` to `secrets.yaml` and fill in
-   **all six** values, or the build will stop with a missing-secret error:
+   **all seven** values, or the build will stop with a missing-secret error:
    - `wifi_ssid` and `wifi_password` — your Wi-Fi network.
-   - `wifi_ssid_2` — a second network to fall back to. If you only have one, just
-     put the same name as `wifi_ssid` here. (Both networks use `wifi_password`.)
+   - `wifi_ssid_2` and `wifi_password_2` — a second network to fall back to. Each
+     network has its **own** password. If you only have one network, put the same
+     name in `wifi_ssid_2` and the same password in `wifi_password_2`.
    - `telegram_bot_token` and `telegram_chat_id` — from step 2.
    - `ota_password` — protects wireless updates. **Generate a strong random one**
      with `openssl rand -hex 16` — don't pick something memorable. Holding the
