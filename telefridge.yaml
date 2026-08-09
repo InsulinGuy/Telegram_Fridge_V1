@@ -577,38 +577,6 @@ script:
           condition:
             lambda: 'return !std::isnan(id(temp_a).state);'
           timeout: 1s
-      # RETRY A FAILED BOX READ (BOX SENSOR FAULT "no reading").
-      # By this point the guard above has already given the deferred publish a
-      # full second of loop time, so a still-NaN temp_a is not a scheduling race
-      # — it is a failed I2C transaction. sht3xd makes exactly ONE attempt per
-      # update() and returns without publishing on failure, so a single NACK
-      # costs the whole sample, and two consecutive wakes latch a sensor fault.
-      #
-      # Retrying here is also the ONLY way the component's own recovery can ever
-      # run on this device: update() issues SHT3XD_COMMAND_SOFT_RESET when
-      # status_has_warning() is set, but that flag lives in RAM and deep sleep
-      # wipes it, so across wakes it is always false and the reset never fires.
-      # A second call in the SAME wake sees the warning and resets the sensor.
-      #
-      # Safety unchanged: a genuinely dead sensor fails every attempt and still
-      # ends NaN, so the fault still latches (issue #12) — just ~2 s later,
-      # inside a 15-minute wake. Costs nothing on the healthy path.
-      - repeat:
-          count: 2
-          then:
-            - if:
-                condition:
-                  lambda: 'return std::isnan(id(temp_a).state);'
-                then:
-                  - lambda: |-
-                      g_diag_retries++;
-                      ESP_LOGE("probe", "RETRY box read (attempt %u)",
-                               (unsigned) g_diag_retries);
-                  - component.update: sht30_hub
-                  - wait_until:
-                      condition:
-                        lambda: 'return !std::isnan(id(temp_a).state);'
-                      timeout: 1s
       - delay: 20ms
       # TEMPORARY DIAGNOSTIC PROBE — remove with the logger block.
       # Logged at ERROR so it survives EVERY log level (the normal detector,
