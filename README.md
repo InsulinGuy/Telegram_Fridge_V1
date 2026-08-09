@@ -248,6 +248,20 @@ worth knowing up front: the **2–8 °C box limits are the medical compliance li
 and are locked**, so a change that loosens them needs a documented argument, not
 just a patch.
 
+## Thanks
+
+This project exists because of [@irascible](https://github.com/irascible).
+
+He taught me how to use GitHub, how to organise a software project, and what
+tests are actually for. Working with him reminded me what it means to have high
+standards and integrity.
+
+He gave his time, his money, his patience and his labour, usually without anyone
+knowing he had. Through **MedAngel** and the temperature sensors he built, that
+generosity reached far more people living with diabetes than ever knew his name.
+
+Every good habit in this repository is one of his. The mistakes are mine.
+
 ## License
 
 Copyright © 2026 Insulin Guy and the TeleFridge contributors.
